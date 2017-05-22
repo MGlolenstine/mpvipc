@@ -3,7 +3,7 @@ name = "mpvipc"
 version = "1.0.0"
 authors = ["Jonas Frei <freijon@gmail.com>"]
 description = "A small library which provides bindings to control existing mpv instances through sockets."
-license = "GPLv3"
+license = "GPL-3.0"
 homepage = "https://github.com/freijon/mpvipc"
 repository = "https://github.com/freijon/mpvipc"
 
