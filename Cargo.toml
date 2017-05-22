@@ -1,0 +1,13 @@
+[package]
+name = "mpvipc"
+version = "1.0.0"
+authors = ["Jonas Frei <freijon@gmail.com>"]
+description = "A small library which provides bindings to control existing mpv instances through sockets."
+license = "GPLv3"
+homepage = "https://github.com/freijon/mpvipc"
+repository = "https://github.com/freijon/mpvipc"
+
+
+[dependencies]
+serde = "1.0.1"
+serde_json = "1.0.0"
