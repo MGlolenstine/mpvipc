@@ -1,11 +1,12 @@
+use serde_json::{self, Value};
+use std::collections::HashMap;
 use std::error::Error;
-use std::io::prelude::*;
 use std::io::BufReader;
+use std::io::prelude::*;
+use std::iter::Iterator;
 use std::os::unix::net::UnixStream;
 use std::net::Shutdown;
-use std::iter::Iterator;
-use std::collections::HashMap;
-use serde_json::{self, Value};
+use std::sync::mpsc::Sender;
 
 #[derive(Debug)]
 pub struct PlaylistEntry {
@@ -284,6 +285,26 @@ pub fn run_mpv_command(socket: &str, command: &str, args: &Vec<&str>) -> Result<
     }
 }
 
+pub fn observe_mpv_property(socket: &str, id: &usize, property: &str) -> Result<(), String> {
+    let ipc_string = format!("{{ \"command\": [\"observe_property\", {}, \"{}\"] }}\n",
+                             id,
+                             property);
+    match serde_json::from_str::<Value>(&send_command_sync(socket, &ipc_string)) {
+        Ok(feedback) => {
+            if let Value::String(ref error) = feedback["error"] {
+                if error == "success" {
+                    Ok(())
+                } else {
+                    Err(error.to_string())
+                }
+            } else {
+                Err("Unexpected result received".to_string())
+            }
+        }
+        Err(why) => Err(why.description().to_string()),
+    }
+}
+
 /// #Description
 ///
 /// Listens on socket <socket> for events and prints them in real-time to stdout.
@@ -293,82 +314,28 @@ pub fn run_mpv_command(socket: &str, command: &str, args: &Vec<&str>) -> Result<
 /// ```
 /// listen("/tmp/mpvsocket");
 /// ```
-pub fn listen(socket: &str) {
+pub fn listen(socket: &str, tx: &Sender<String>) {
     match UnixStream::connect(socket) {
         Ok(stream) => {
             let mut response = String::new();
             let mut reader = BufReader::new(&stream);
-            loop {
-                reader.read_line(&mut response).unwrap();
-                match serde_json::from_str::<Value>(&response) {
-                    Ok(e) => {
-                        if let Value::String(ref name) = e["event"] {
-                            println!("{}", name);
-                        }
+            reader.read_line(&mut response).unwrap();
+            match serde_json::from_str::<Value>(&response) {
+                Ok(e) => {
+                    if let Value::String(ref name) = e["event"] {
+                        tx.send(name.to_string()).unwrap();
                     }
-                    Err(why) => panic!("{}", why.description().to_string()),
                 }
-                response.clear();
+                Err(why) => panic!("{}", why.description().to_string()),
             }
+            response.clear();
+            stream
+                .shutdown(Shutdown::Both)
+                .expect("shutdown function failed");
         }
         Err(why) => panic!("Error: Could not connect to socket: {}", why.description()),
     }
 }
-
-/// #Description
-///
-/// Listens on socket <socket> for events quits as soon as event <event> occurs.
-///
-/// #Example
-/// ```
-/// wait_for_event("/tmp/mpvsocket", "pause");
-/// ```
-pub fn wait_for_event(socket: &str, event: &str) {
-    match UnixStream::connect(socket) {
-        Ok(stream) => {
-            let mut response = String::new();
-            let mut reader = BufReader::new(&stream);
-            loop {
-                reader.read_line(&mut response).unwrap();
-                match serde_json::from_str::<Value>(&response) {
-                    Ok(e) => {
-                        if let Value::String(ref name) = e["event"] {
-                            if name.as_str() == event {
-                                break;
-                            }
-                        }
-                    }
-                    Err(why) => panic!("{}", why.description().to_string()),
-                }
-                response.clear();
-            }
-            stream.shutdown(Shutdown::Both).expect("socket shutdown");
-        }
-        Err(why) => panic!("Error: Could not connect to socket: {}", why.description()),
-    }
-}
-
-// pub fn observe_property(socket: &str, property: &str) -> String {
-//     match UnixStream::connect(socket) {
-//         Ok(mut stream) => {
-//             let command = format!("{{ \"command\": [\"observe_property\", 1, \"{}\"] }}\n",
-//                                   property);
-//             match stream.write_all(command.as_bytes()) {
-//                 Err(why) => error!("Error: Could not write to socket: {}", why.description()),
-//                 Ok(_) => {
-//                     let mut response = String::new();
-//                     let mut reader = BufReader::new(&stream);
-//                     loop {
-//                         reader.read_line(&mut response).unwrap();
-//                         println!("{}", response);
-//                         response.clear();
-//                     }
-//                 }
-//             }
-//         }
-//         Err(why) => error!("Error: Could not connect to socket: {}", why.description()),
-//     }
-// }
 
 fn send_command_sync(socket: &str, command: &str) -> String {
     match UnixStream::connect(socket) {

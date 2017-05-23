@@ -3,8 +3,10 @@ extern crate serde_json;
 
 pub mod ipc;
 
-use std::collections::HashMap;
 use ipc::*;
+use std::collections::HashMap;
+use std::sync::mpsc::Sender;
+
 
 pub type Socket = String;
 
@@ -192,46 +194,6 @@ impl PlaylistHandler for Playlist {
 pub trait Commands {
     fn get_metadata(&self) -> Result<HashMap<String, String>, String>;
     fn get_playlist(&self) -> Result<Playlist, String>;
-    fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, String>;
-    fn get_property_string(&self, property: &str) -> Result<String, String>;
-    fn kill(&self) -> Result<(), String>;
-    fn next(&self) -> Result<(), String>;
-    fn pause(&self) -> Result<(), String>;
-    fn playlist_add(&self, file: &str, option: PlaylistAddOptions) -> Result<(), String>;
-    fn playlist_clear(&self) -> Result<(), String>;
-    fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), String>;
-    fn playlist_play_id(&self, id: usize) -> Result<(), String>;
-    fn playlist_play_next(&self, id: usize) -> Result<(), String>;
-    fn playlist_shuffle(&self) -> Result<(), String>;
-    fn playlist_remove_id(&self, id: usize) -> Result<(), String>;
-    fn prev(&self) -> Result<(), String>;
-    fn restart(&self) -> Result<(), String>;
-    fn run_command(&self, command: &str, args: &Vec<&str>) -> Result<(), String>;
-    fn seek(&self, seconds: f64, option: SeekOptions) -> Result<(), String>;
-    fn set_loop_file(&self, option: Switch) -> Result<(), String>;
-    fn set_loop_playlist(&self, option: Switch) -> Result<(), String>;
-    fn set_mute(&self, option: Switch) -> Result<(), String>;
-    fn set_property<T: SetPropertyTypeHandler<T>>(&self,
-                                                  property: &str,
-                                                  value: T)
-                                                  -> Result<(), String>;
-    fn set_speed(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), String>;
-    fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), String>;
-    fn stop(&self) -> Result<(), String>;
-    fn toggle(&self) -> Result<(), String>;
-}
-
-impl Commands for Socket {
-    fn get_metadata(&self) -> Result<HashMap<String, String>, String> {
-        match get_mpv_property(self, "metadata") {
-            Ok(map) => Ok(map),
-            Err(err) => Err(err),
-        }
-    }
-
-    fn get_playlist(&self) -> Result<Playlist, String> {
-        Playlist::get_from(self.to_string())
-    }
 
     /// #Description
     ///
@@ -254,9 +216,7 @@ impl Commands for Socket {
     /// let paused: bool = mpv.get_property("pause").unwrap();
     /// let title: String = mpv.get_property("media-title").unwrap();
     /// ```
-    fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, String> {
-        T::get_property_generic(self, property)
-    }
+    fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, String>;
 
     /// #Description
     ///
@@ -274,29 +234,21 @@ impl Commands for Socket {
     /// let mpv: Socket = String::from(matches.value_of("socket").unwrap());
     /// let title = mpv.get_property_string("media-title").unwrap();
     /// ```
-    fn get_property_string(&self, property: &str) -> Result<String, String> {
-        get_mpv_property_string(self, property)
-    }
-
-    fn kill(&self) -> Result<(), String> {
-        run_mpv_command(self, "quit", &vec![])
-    }
-
-    fn next(&self) -> Result<(), String> {
-        run_mpv_command(self, "playlist-next", &vec![])
-    }
-
-    fn pause(&self) -> Result<(), String> {
-        set_mpv_property(self, "pause", true)
-    }
-
-    fn prev(&self) -> Result<(), String> {
-        run_mpv_command(self, "playlist-prev", &vec![])
-    }
-
-    fn restart(&self) -> Result<(), String> {
-        run_mpv_command(self, "seek", &vec!["0", "absolute"])
-    }
+    fn get_property_string(&self, property: &str) -> Result<String, String>;
+    fn kill(&self) -> Result<(), String>;
+    fn listen(&self, tx: &Sender<String>);
+    fn next(&self) -> Result<(), String>;
+    fn observe_property(&self, id: &usize, property: &str) -> Result<(), String>;
+    fn pause(&self) -> Result<(), String>;
+    fn playlist_add(&self, file: &str, option: PlaylistAddOptions) -> Result<(), String>;
+    fn playlist_clear(&self) -> Result<(), String>;
+    fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), String>;
+    fn playlist_play_id(&self, id: usize) -> Result<(), String>;
+    fn playlist_play_next(&self, id: usize) -> Result<(), String>;
+    fn playlist_shuffle(&self) -> Result<(), String>;
+    fn playlist_remove_id(&self, id: usize) -> Result<(), String>;
+    fn prev(&self) -> Result<(), String>;
+    fn restart(&self) -> Result<(), String>;
 
     /// #Description
     ///
@@ -312,6 +264,90 @@ impl Commands for Socket {
     /// //Run command 'seek' which in this case takes two arguments
     /// mpv.run_command("seek", &vec!["0", "absolute"]);
     /// ```
+    fn run_command(&self, command: &str, args: &Vec<&str>) -> Result<(), String>;
+    fn seek(&self, seconds: f64, option: SeekOptions) -> Result<(), String>;
+    fn set_loop_file(&self, option: Switch) -> Result<(), String>;
+    fn set_loop_playlist(&self, option: Switch) -> Result<(), String>;
+    fn set_mute(&self, option: Switch) -> Result<(), String>;
+
+    /// #Description
+    ///
+    /// Sets the mpv property _<property>_ to _<value>_.
+    ///
+    /// ##Supported types
+    /// - String
+    /// - bool
+    /// - f64
+    /// - usize
+    ///
+    /// ##Input arguments
+    ///
+    /// - **property** defines the mpv property that should be retrieved
+    /// - **value** defines the value of the given mpv property _<property>_
+    ///
+    /// #Example
+    /// ```
+    /// let mpv: Socket = String::from(matches.value_of("socket").unwrap());
+    /// mpv.set_property("pause", true);
+    /// ```
+    fn set_property<T: SetPropertyTypeHandler<T>>(&self,
+                                                  property: &str,
+                                                  value: T)
+                                                  -> Result<(), String>;
+    fn set_speed(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), String>;
+    fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), String>;
+    fn stop(&self) -> Result<(), String>;
+    fn toggle(&self) -> Result<(), String>;
+}
+
+impl Commands for Socket {
+    fn get_metadata(&self) -> Result<HashMap<String, String>, String> {
+        match get_mpv_property(self, "metadata") {
+            Ok(map) => Ok(map),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn get_playlist(&self) -> Result<Playlist, String> {
+        Playlist::get_from(self.to_string())
+    }
+
+    fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, String> {
+        T::get_property_generic(self, property)
+    }
+
+    fn get_property_string(&self, property: &str) -> Result<String, String> {
+        get_mpv_property_string(self, property)
+    }
+
+    fn kill(&self) -> Result<(), String> {
+        run_mpv_command(self, "quit", &vec![])
+    }
+
+    fn listen(&self, tx: &Sender<String>) {
+        listen(self, tx);
+    }
+
+    fn next(&self) -> Result<(), String> {
+        run_mpv_command(self, "playlist-next", &vec![])
+    }
+
+    fn observe_property(&self, id: &usize, property: &str) -> Result<(), String> {
+        observe_mpv_property(self, id, property)
+    }
+
+    fn pause(&self) -> Result<(), String> {
+        set_mpv_property(self, "pause", true)
+    }
+
+    fn prev(&self) -> Result<(), String> {
+        run_mpv_command(self, "playlist-prev", &vec![])
+    }
+
+    fn restart(&self) -> Result<(), String> {
+        run_mpv_command(self, "seek", &vec!["0", "absolute"])
+    }
+
     fn run_command(&self, command: &str, args: &Vec<&str>) -> Result<(), String> {
         run_mpv_command(self, command, args)
     }
@@ -451,26 +487,6 @@ impl Commands for Socket {
         set_mpv_property(self, "mute", enabled)
     }
 
-    /// #Description
-    ///
-    /// Sets the mpv property _<property>_ to _<value>_.
-    ///
-    /// ##Supported types
-    /// - String
-    /// - bool
-    /// - f64
-    /// - usize
-    ///
-    /// ##Input arguments
-    ///
-    /// - **property** defines the mpv property that should be retrieved
-    /// - **value** defines the value of the given mpv property _<property>_
-    ///
-    /// #Example
-    /// ```
-    /// let mpv: Socket = String::from(matches.value_of("socket").unwrap());
-    /// mpv.set_property("pause", true);
-    /// ```
     fn set_property<T: SetPropertyTypeHandler<T>>(&self,
                                                   property: &str,
                                                   value: T)
