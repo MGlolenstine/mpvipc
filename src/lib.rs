@@ -5,10 +5,10 @@ pub mod ipc;
 
 use ipc::*;
 use std::collections::HashMap;
+use std::os::unix::net::UnixStream;
 use std::sync::mpsc::Sender;
 
-
-pub type Socket = String;
+pub type Mpv = UnixStream;
 
 pub enum NumberChangeOptions {
     Absolute,
@@ -35,159 +35,88 @@ pub enum Switch {
     Toggle,
 }
 
-pub struct Playlist {
-    pub socket: Socket,
-    pub entries: Vec<PlaylistEntry>,
+pub struct Playlist(pub Vec<PlaylistEntry>);
+
+pub trait MpvConnector {
+    fn connect(socket: &str) -> Result<Mpv, String>;
+}
+
+impl MpvConnector for Mpv {
+    fn connect(socket: &str) -> Result<Mpv, String> {
+        match UnixStream::connect(socket) {
+            Ok(stream) => Ok(stream),
+            Err(msg) => Err(msg.to_string()),
+        }
+    }
 }
 
 pub trait GetPropertyTypeHandler: Sized {
-    fn get_property_generic(socket: &str, property: &str) -> Result<Self, String>;
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<Self, String>;
 }
 
 impl GetPropertyTypeHandler for bool {
-    fn get_property_generic(socket: &str, property: &str) -> Result<bool, String> {
-        get_mpv_property::<bool>(socket, property)
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<bool, String> {
+        get_mpv_property::<bool>(instance, property)
     }
 }
 
 impl GetPropertyTypeHandler for String {
-    fn get_property_generic(socket: &str, property: &str) -> Result<String, String> {
-        get_mpv_property::<String>(socket, property)
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<String, String> {
+        get_mpv_property::<String>(instance, property)
     }
 }
 
 impl GetPropertyTypeHandler for f64 {
-    fn get_property_generic(socket: &str, property: &str) -> Result<f64, String> {
-        get_mpv_property::<f64>(socket, property)
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<f64, String> {
+        get_mpv_property::<f64>(instance, property)
     }
 }
 
 impl GetPropertyTypeHandler for usize {
-    fn get_property_generic(socket: &str, property: &str) -> Result<usize, String> {
-        get_mpv_property::<usize>(socket, property)
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<usize, String> {
+        get_mpv_property::<usize>(instance, property)
     }
 }
 
 impl GetPropertyTypeHandler for Vec<PlaylistEntry> {
-    fn get_property_generic(socket: &str, property: &str) -> Result<Vec<PlaylistEntry>, String> {
-        get_mpv_property::<Vec<PlaylistEntry>>(socket, property)
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<Vec<PlaylistEntry>, String> {
+        get_mpv_property::<Vec<PlaylistEntry>>(instance, property)
     }
 }
 
 impl GetPropertyTypeHandler for HashMap<String, String> {
-    fn get_property_generic(socket: &str,
+    fn get_property_generic(instance: &Mpv,
                             property: &str)
                             -> Result<HashMap<String, String>, String> {
-        get_mpv_property::<HashMap<String, String>>(socket, property)
+        get_mpv_property::<HashMap<String, String>>(instance, property)
     }
 }
 
 pub trait SetPropertyTypeHandler<T> {
-    fn set_property_generic(socket: &str, property: &str, value: T) -> Result<(), String>;
+    fn set_property_generic(instance: &Mpv, property: &str, value: T) -> Result<(), String>;
 }
 
 impl SetPropertyTypeHandler<bool> for bool {
-    fn set_property_generic(socket: &str, property: &str, value: bool) -> Result<(), String> {
-        set_mpv_property::<bool>(socket, property, value)
+    fn set_property_generic(instance: &Mpv, property: &str, value: bool) -> Result<(), String> {
+        set_mpv_property::<bool>(instance, property, value)
     }
 }
 
 impl SetPropertyTypeHandler<String> for String {
-    fn set_property_generic(socket: &str, property: &str, value: String) -> Result<(), String> {
-        set_mpv_property::<String>(socket, property, value)
+    fn set_property_generic(instance: &Mpv, property: &str, value: String) -> Result<(), String> {
+        set_mpv_property::<String>(instance, property, value)
     }
 }
 
 impl SetPropertyTypeHandler<f64> for f64 {
-    fn set_property_generic(socket: &str, property: &str, value: f64) -> Result<(), String> {
-        set_mpv_property::<f64>(socket, property, value)
+    fn set_property_generic(instance: &Mpv, property: &str, value: f64) -> Result<(), String> {
+        set_mpv_property::<f64>(instance, property, value)
     }
 }
 
 impl SetPropertyTypeHandler<usize> for usize {
-    fn set_property_generic(socket: &str, property: &str, value: usize) -> Result<(), String> {
-        set_mpv_property::<usize>(socket, property, value)
-    }
-}
-
-pub trait PlaylistHandler {
-    fn get_from(socket: Socket) -> Result<Playlist, String>;
-    fn shuffle(&mut self) -> &mut Playlist;
-    fn remove_id(&mut self, id: usize) -> &mut Playlist;
-    fn move_entry(&mut self, from: usize, to: usize) -> &mut Playlist;
-    fn current_id(&self) -> Option<usize>;
-}
-
-impl PlaylistHandler for Playlist {
-    fn get_from(socket: Socket) -> Result<Playlist, String> {
-        match get_mpv_property(&socket, "playlist") {
-            Ok(playlist) => {
-                Ok(Playlist {
-                       socket: socket,
-                       entries: playlist,
-                   })
-            }
-            Err(why) => Err(why),
-        }
-    }
-
-    fn shuffle(&mut self) -> &mut Playlist {
-        if let Err(error_msg) = run_mpv_command(&self.socket, "playlist-shuffle", &vec![]) {
-            panic!("Error: {}", error_msg);
-        }
-        if let Ok(mut playlist_entries) =
-            get_mpv_property::<Vec<PlaylistEntry>>(&self.socket, "playlist") {
-            if self.entries.len() == playlist_entries.len() {
-                for (i, entry) in playlist_entries.drain(0..).enumerate() {
-                    self.entries[i] = entry;
-                }
-            }
-        }
-        self
-    }
-
-    fn remove_id(&mut self, id: usize) -> &mut Playlist {
-        self.entries.remove(id);
-        if let Err(error_msg) = run_mpv_command(&self.socket,
-                                                "playlist-remove",
-                                                &vec![&id.to_string()]) {
-            panic!("Error: {}", error_msg);
-        }
-        self
-    }
-
-    fn move_entry(&mut self, from: usize, to: usize) -> &mut Playlist {
-        if from != to {
-            if let Err(error_msg) = run_mpv_command(&self.socket,
-                                                    "playlist-move",
-                                                    &vec![&from.to_string(), &to.to_string()]) {
-                panic!("Error: {}", error_msg);
-            }
-            if from < to {
-                self.entries[from].id = to - 1;
-                self.entries[to].id = to - 2;
-                for i in from..to - 2 {
-                    self.entries[i + 1].id = i;
-                }
-                self.entries.sort_by_key(|entry| entry.id);
-            } else if from > to {
-                self.entries[from].id = to;
-                for i in to..from - 1 {
-                    self.entries[i].id = i + 1;
-                }
-                self.entries.sort_by_key(|entry| entry.id);
-            }
-        }
-        self
-    }
-
-    fn current_id(&self) -> Option<usize> {
-        for entry in self.entries.iter() {
-            if entry.current {
-                return Some(entry.id);
-            }
-        }
-        None
+    fn set_property_generic(instance: &Mpv, property: &str, value: usize) -> Result<(), String> {
+        set_mpv_property::<usize>(instance, property, value)
     }
 }
 
@@ -204,6 +133,8 @@ pub trait Commands {
     /// - bool
     /// - HashMap<String, String> (e.g. for the 'metadata' property)
     /// - Vec<PlaylistEntry> (for the 'playlist' property)
+    /// - usize
+    /// - f64
     ///
     /// ##Input arguments
     ///
@@ -212,7 +143,7 @@ pub trait Commands {
     ///
     /// #Example
     /// ```
-    /// let mpv: Socket = String::from(matches.value_of("socket").unwrap());
+    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// let paused: bool = mpv.get_property("pause").unwrap();
     /// let title: String = mpv.get_property("media-title").unwrap();
     /// ```
@@ -231,7 +162,7 @@ pub trait Commands {
     /// #Example
     ///
     /// ```
-    /// let mpv: Socket = String::from(matches.value_of("socket").unwrap());
+    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// let title = mpv.get_property_string("media-title").unwrap();
     /// ```
     fn get_property_string(&self, property: &str) -> Result<String, String>;
@@ -256,7 +187,7 @@ pub trait Commands {
     ///
     /// #Example
     /// ```
-    /// let mpv: Socket = String::from(matches.value_of("socket").unwrap());
+    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     ///
     /// //Run command 'playlist-shuffle' which takes no arguments
     /// mpv.run_command("playlist-shuffle", &vec![]);
@@ -287,7 +218,7 @@ pub trait Commands {
     ///
     /// #Example
     /// ```
-    /// let mpv: Socket = String::from(matches.value_of("socket").unwrap());
+    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// mpv.set_property("pause", true);
     /// ```
     fn set_property<T: SetPropertyTypeHandler<T>>(&self,
@@ -300,7 +231,7 @@ pub trait Commands {
     fn toggle(&self) -> Result<(), String>;
 }
 
-impl Commands for Socket {
+impl Commands for Mpv {
     fn get_metadata(&self) -> Result<HashMap<String, String>, String> {
         match get_mpv_property(self, "metadata") {
             Ok(map) => Ok(map),
@@ -309,7 +240,10 @@ impl Commands for Socket {
     }
 
     fn get_playlist(&self) -> Result<Playlist, String> {
-        Playlist::get_from(self.to_string())
+        match get_mpv_property::<Vec<PlaylistEntry>>(self, "playlist") {
+            Ok(entries) => Ok(Playlist(entries)),
+            Err(msg) => Err(msg),
+        }
     }
 
     fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, String> {
@@ -379,17 +313,13 @@ impl Commands for Socket {
     }
 
     fn playlist_play_next(&self, id: usize) -> Result<(), String> {
-        match Playlist::get_from(self.to_string()) {
-            Ok(playlist) => {
-                if let Some(current_id) = playlist.current_id() {
-                    run_mpv_command(self,
-                                    "playlist-move",
-                                    &vec![&id.to_string(), &(current_id + 1).to_string()])
-                } else {
-                    Err("There is no file playing at the moment.".to_string())
-                }
+        match get_mpv_property::<usize>(self, "playlist-pos") {
+            Ok(current_id) => {
+                run_mpv_command(self,
+                                "playlist-move",
+                                &vec![&id.to_string(), &(current_id + 1).to_string()])
             }
-            Err(why) => Err(why),
+            Err(msg) => Err(msg),
         }
     }
 

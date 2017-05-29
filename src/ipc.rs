@@ -4,9 +4,8 @@ use std::error::Error;
 use std::io::BufReader;
 use std::io::prelude::*;
 use std::iter::Iterator;
-use std::os::unix::net::UnixStream;
-use std::net::Shutdown;
 use std::sync::mpsc::Sender;
+use super::Mpv;
 
 #[derive(Debug)]
 pub struct PlaylistEntry {
@@ -209,18 +208,18 @@ impl TypeHandler for Vec<PlaylistEntry> {
     }
 }
 
-pub fn get_mpv_property<T: TypeHandler>(socket: &str, property: &str) -> Result<T, String> {
+pub fn get_mpv_property<T: TypeHandler>(instance: &Mpv, property: &str) -> Result<T, String> {
     let ipc_string = format!("{{ \"command\": [\"get_property\",\"{}\"] }}\n", property);
 
-    match serde_json::from_str::<Value>(&send_command_sync(socket, &ipc_string)) {
+    match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(val) => T::get_value(val),
         Err(why) => Err(format!("Error while getting property: {}", why)),
     }
 }
 
-pub fn get_mpv_property_string(socket: &str, property: &str) -> Result<String, String> {
+pub fn get_mpv_property_string(instance: &Mpv, property: &str) -> Result<String, String> {
     let ipc_string = format!("{{ \"command\": [\"get_property\",\"{}\"] }}\n", property);
-    match serde_json::from_str::<Value>(&send_command_sync(socket, &ipc_string)) {
+    match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(val) => {
             if let Value::Object(map) = val {
                 if let Value::String(ref error) = map["error"] {
@@ -247,20 +246,20 @@ pub fn get_mpv_property_string(socket: &str, property: &str) -> Result<String, S
     }
 }
 
-pub fn set_mpv_property<T: TypeHandler>(socket: &str,
+pub fn set_mpv_property<T: TypeHandler>(instance: &Mpv,
                                         property: &str,
                                         value: T)
                                         -> Result<(), String> {
     let ipc_string = format!("{{ \"command\": [\"set_property\", \"{}\", {}] }}\n",
                              property,
                              value.as_string());
-    match serde_json::from_str::<Value>(&send_command_sync(socket, &ipc_string)) {
+    match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(_) => Ok(()),
         Err(why) => Err(why.description().to_string()),
     }
 }
 
-pub fn run_mpv_command(socket: &str, command: &str, args: &Vec<&str>) -> Result<(), String> {
+pub fn run_mpv_command(instance: &Mpv, command: &str, args: &Vec<&str>) -> Result<(), String> {
     let mut ipc_string = format!("{{ \"command\": [\"{}\"", command);
     if args.len() > 0 {
         for arg in args.iter() {
@@ -269,7 +268,7 @@ pub fn run_mpv_command(socket: &str, command: &str, args: &Vec<&str>) -> Result<
     }
     ipc_string.push_str("] }\n");
     ipc_string = ipc_string;
-    match serde_json::from_str::<Value>(&send_command_sync(socket, &ipc_string)) {
+    match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(feedback) => {
             if let Value::String(ref error) = feedback["error"] {
                 if error == "success" {
@@ -278,6 +277,7 @@ pub fn run_mpv_command(socket: &str, command: &str, args: &Vec<&str>) -> Result<
                     Err(error.to_string())
                 }
             } else {
+                //Ok(())
                 Err("Error: Unexpected result received".to_string())
             }
         }
@@ -285,11 +285,11 @@ pub fn run_mpv_command(socket: &str, command: &str, args: &Vec<&str>) -> Result<
     }
 }
 
-pub fn observe_mpv_property(socket: &str, id: &usize, property: &str) -> Result<(), String> {
+pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Result<(), String> {
     let ipc_string = format!("{{ \"command\": [\"observe_property\", {}, \"{}\"] }}\n",
                              id,
                              property);
-    match serde_json::from_str::<Value>(&send_command_sync(socket, &ipc_string)) {
+    match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(feedback) => {
             if let Value::String(ref error) = feedback["error"] {
                 if error == "success" {
@@ -314,47 +314,35 @@ pub fn observe_mpv_property(socket: &str, id: &usize, property: &str) -> Result<
 /// ```
 /// listen("/tmp/mpvsocket");
 /// ```
-pub fn listen(socket: &str, tx: &Sender<String>) {
-    match UnixStream::connect(socket) {
-        Ok(stream) => {
-            let mut response = String::new();
-            let mut reader = BufReader::new(&stream);
-            reader.read_line(&mut response).unwrap();
-            match serde_json::from_str::<Value>(&response) {
-                Ok(e) => {
-                    if let Value::String(ref name) = e["event"] {
-                        tx.send(name.to_string()).unwrap();
-                    }
-                }
-                Err(why) => panic!("{}", why.description().to_string()),
+pub fn listen(instance: &Mpv, tx: &Sender<String>) {
+    let mut response = String::new();
+    let mut reader = BufReader::new(instance);
+    reader.read_line(&mut response).unwrap();
+    match serde_json::from_str::<Value>(&response) {
+        Ok(e) => {
+            if let Value::String(ref name) = e["event"] {
+                tx.send(name.to_string()).unwrap();
             }
-            response.clear();
-            stream
-                .shutdown(Shutdown::Both)
-                .expect("shutdown function failed");
         }
-        Err(why) => panic!("Error: Could not connect to socket: {}", why.description()),
+        Err(why) => panic!("{}", why.description().to_string()),
     }
+    response.clear();
 }
 
-fn send_command_sync(socket: &str, command: &str) -> String {
-    match UnixStream::connect(socket) {
-        Ok(mut stream) => {
-            match stream.write_all(command.as_bytes()) {
-                Err(why) => panic!("Error: Could not write to socket: {}", why.description()),
-                Ok(_) => {
-                    let mut response = String::new();
-                    {
-                        let mut reader = BufReader::new(&stream);
-                        reader.read_line(&mut response).unwrap();
-                    }
-                    stream
-                        .shutdown(Shutdown::Both)
-                        .expect("shutdown function failed");
-                    response
+fn send_command_sync(instance: &Mpv, command: &str) -> String {
+    let mut stream = instance;
+    match stream.write_all(command.as_bytes()) {
+        Err(why) => panic!("Error: Could not write to socket: {}", why.description()),
+        Ok(_) => {
+            let mut response = String::new();
+            {
+                let mut reader = BufReader::new(stream);
+                while !response.contains("\"error\":") {
+                    response.clear();
+                    reader.read_line(&mut response).unwrap();
                 }
             }
+            response
         }
-        Err(why) => panic!("Error: Could not connect to socket: {}", why.description()),
     }
 }
