@@ -28,6 +28,8 @@ $ mpv --input-ipc-server=/tmp/mpvsocket --idle
 Here is a small code example which connects to the socket /tmp/mpvsocket and toggles playback.
 
 ```
+extern crate mpvipc;
+
 use mpvipc::*;
 use std::sync::mpsc::channel;
 
