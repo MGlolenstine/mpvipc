@@ -5,6 +5,7 @@ pub mod ipc;
 
 use ipc::*;
 use std::collections::HashMap;
+use std::fmt::{self, Display};
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc::Sender;
 
@@ -35,51 +36,108 @@ pub enum Switch {
     Toggle,
 }
 
+#[derive(Debug)]
+pub enum ErrorCode {
+    MpvError(String),
+    JsonParseError(String),
+    ConnectError(String),
+    UnexpectedResult,
+    UnexpectedValueReceived,
+    UnsupportedType,
+    ValueDoesNotContainBool,
+    ValueDoesNotContainF64,
+    ValueDoesNotContainHashMap,
+    ValueDoesNotContainPlaylist,
+    ValueDoesNotContainString,
+    ValueDoesNotContainUsize,
+}
+
 pub struct Playlist(pub Vec<PlaylistEntry>);
+#[derive(Debug)]
+pub struct Error(pub ErrorCode);
 
 pub trait MpvConnector {
-    fn connect(socket: &str) -> Result<Mpv, String>;
+    fn connect(socket: &str) -> Result<Mpv, Error>;
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
+
+impl Display for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ErrorCode::ConnectError(ref msg) => f.write_str(&format!("ConnectError: {}", msg)),
+            ErrorCode::JsonParseError(ref msg) => f.write_str(&format!("JsonParseError: {}", msg)),
+            ErrorCode::MpvError(ref msg) => {
+                f.write_str(&format!("mpv returned an error value: {}", msg))
+            }
+            ErrorCode::UnexpectedResult => f.write_str("Unexpected result received"),
+            ErrorCode::UnexpectedValueReceived => f.write_str("Unexpected value received"),
+            ErrorCode::UnsupportedType => f.write_str("Unsupported type received"),
+            ErrorCode::ValueDoesNotContainBool => {
+                f.write_str("The received value is not of type \'std::bool\'")
+            }
+            ErrorCode::ValueDoesNotContainF64 => {
+                f.write_str("The received value is not of type \'std::f64\'")
+            }
+            ErrorCode::ValueDoesNotContainHashMap => {
+                f.write_str("The received value is not of type \'std::collections::HashMap\'")
+            }
+            ErrorCode::ValueDoesNotContainPlaylist => {
+                f.write_str("The received value is not of type \'mpvipc::Playlist\'")
+            }
+            ErrorCode::ValueDoesNotContainString => {
+                f.write_str("The received value is not of type \'std::string::String\'")
+            }
+            ErrorCode::ValueDoesNotContainUsize => {
+                f.write_str("The received value is not of type \'std::usize\'")
+            }
+        }
+    }
 }
 
 impl MpvConnector for Mpv {
-    fn connect(socket: &str) -> Result<Mpv, String> {
+    fn connect(socket: &str) -> Result<Mpv, Error> {
         match UnixStream::connect(socket) {
             Ok(stream) => Ok(stream),
-            Err(msg) => Err(msg.to_string()),
+            Err(internal_error) => Err(Error(ErrorCode::ConnectError(internal_error.to_string()))),
         }
     }
 }
 
 pub trait GetPropertyTypeHandler: Sized {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<Self, String>;
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<Self, Error>;
 }
 
 impl GetPropertyTypeHandler for bool {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<bool, String> {
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<bool, Error> {
         get_mpv_property::<bool>(instance, property)
     }
 }
 
 impl GetPropertyTypeHandler for String {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<String, String> {
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<String, Error> {
         get_mpv_property::<String>(instance, property)
     }
 }
 
 impl GetPropertyTypeHandler for f64 {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<f64, String> {
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<f64, Error> {
         get_mpv_property::<f64>(instance, property)
     }
 }
 
 impl GetPropertyTypeHandler for usize {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<usize, String> {
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<usize, Error> {
         get_mpv_property::<usize>(instance, property)
     }
 }
 
 impl GetPropertyTypeHandler for Vec<PlaylistEntry> {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<Vec<PlaylistEntry>, String> {
+    fn get_property_generic(instance: &Mpv, property: &str) -> Result<Vec<PlaylistEntry>, Error> {
         get_mpv_property::<Vec<PlaylistEntry>>(instance, property)
     }
 }
@@ -87,42 +145,42 @@ impl GetPropertyTypeHandler for Vec<PlaylistEntry> {
 impl GetPropertyTypeHandler for HashMap<String, String> {
     fn get_property_generic(instance: &Mpv,
                             property: &str)
-                            -> Result<HashMap<String, String>, String> {
+                            -> Result<HashMap<String, String>, Error> {
         get_mpv_property::<HashMap<String, String>>(instance, property)
     }
 }
 
 pub trait SetPropertyTypeHandler<T> {
-    fn set_property_generic(instance: &Mpv, property: &str, value: T) -> Result<(), String>;
+    fn set_property_generic(instance: &Mpv, property: &str, value: T) -> Result<(), Error>;
 }
 
 impl SetPropertyTypeHandler<bool> for bool {
-    fn set_property_generic(instance: &Mpv, property: &str, value: bool) -> Result<(), String> {
+    fn set_property_generic(instance: &Mpv, property: &str, value: bool) -> Result<(), Error> {
         set_mpv_property::<bool>(instance, property, value)
     }
 }
 
 impl SetPropertyTypeHandler<String> for String {
-    fn set_property_generic(instance: &Mpv, property: &str, value: String) -> Result<(), String> {
+    fn set_property_generic(instance: &Mpv, property: &str, value: String) -> Result<(), Error> {
         set_mpv_property::<String>(instance, property, value)
     }
 }
 
 impl SetPropertyTypeHandler<f64> for f64 {
-    fn set_property_generic(instance: &Mpv, property: &str, value: f64) -> Result<(), String> {
+    fn set_property_generic(instance: &Mpv, property: &str, value: f64) -> Result<(), Error> {
         set_mpv_property::<f64>(instance, property, value)
     }
 }
 
 impl SetPropertyTypeHandler<usize> for usize {
-    fn set_property_generic(instance: &Mpv, property: &str, value: usize) -> Result<(), String> {
+    fn set_property_generic(instance: &Mpv, property: &str, value: usize) -> Result<(), Error> {
         set_mpv_property::<usize>(instance, property, value)
     }
 }
 
 pub trait Commands {
-    fn get_metadata(&self) -> Result<HashMap<String, String>, String>;
-    fn get_playlist(&self) -> Result<Playlist, String>;
+    fn get_metadata(&self) -> Result<HashMap<String, String>, Error>;
+    fn get_playlist(&self) -> Result<Playlist, Error>;
 
     /// #Description
     ///
@@ -138,7 +196,6 @@ pub trait Commands {
     ///
     /// ##Input arguments
     ///
-    /// - **socket** defines the socket that ipc connects to
     /// - **property** defines the mpv property that should be retrieved
     ///
     /// #Example
@@ -147,7 +204,7 @@ pub trait Commands {
     /// let paused: bool = mpv.get_property("pause").unwrap();
     /// let title: String = mpv.get_property("media-title").unwrap();
     /// ```
-    fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, String>;
+    fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, Error>;
 
     /// #Description
     ///
@@ -156,7 +213,6 @@ pub trait Commands {
     ///
     /// ##Input arguments
     ///
-    /// - **socket** defines the socket that ipc connects to
     /// - **property** defines the mpv property that should be retrieved
     ///
     /// #Example
@@ -165,21 +221,22 @@ pub trait Commands {
     /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// let title = mpv.get_property_string("media-title").unwrap();
     /// ```
-    fn get_property_string(&self, property: &str) -> Result<String, String>;
-    fn kill(&self) -> Result<(), String>;
+    fn get_property_string(&self, property: &str) -> Result<String, Error>;
+    fn kill(&self) -> Result<(), Error>;
     fn listen(&self, tx: &Sender<String>);
-    fn next(&self) -> Result<(), String>;
-    fn observe_property(&self, id: &usize, property: &str) -> Result<(), String>;
-    fn pause(&self) -> Result<(), String>;
-    fn playlist_add(&self, file: &str, option: PlaylistAddOptions) -> Result<(), String>;
-    fn playlist_clear(&self) -> Result<(), String>;
-    fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), String>;
-    fn playlist_play_id(&self, id: usize) -> Result<(), String>;
-    fn playlist_play_next(&self, id: usize) -> Result<(), String>;
-    fn playlist_shuffle(&self) -> Result<(), String>;
-    fn playlist_remove_id(&self, id: usize) -> Result<(), String>;
-    fn prev(&self) -> Result<(), String>;
-    fn restart(&self) -> Result<(), String>;
+    fn listen_raw(&self, tx: &Sender<String>);
+    fn next(&self) -> Result<(), Error>;
+    fn observe_property(&self, id: &usize, property: &str) -> Result<(), Error>;
+    fn pause(&self) -> Result<(), Error>;
+    fn playlist_add(&self, file: &str, option: PlaylistAddOptions) -> Result<(), Error>;
+    fn playlist_clear(&self) -> Result<(), Error>;
+    fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), Error>;
+    fn playlist_play_id(&self, id: usize) -> Result<(), Error>;
+    fn playlist_play_next(&self, id: usize) -> Result<(), Error>;
+    fn playlist_shuffle(&self) -> Result<(), Error>;
+    fn playlist_remove_id(&self, id: usize) -> Result<(), Error>;
+    fn prev(&self) -> Result<(), Error>;
+    fn restart(&self) -> Result<(), Error>;
 
     /// #Description
     ///
@@ -190,16 +247,16 @@ pub trait Commands {
     /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     ///
     /// //Run command 'playlist-shuffle' which takes no arguments
-    /// mpv.run_command("playlist-shuffle", &vec![]);
+    /// mpv.run_command("playlist-shuffle", &[]);
     ///
     /// //Run command 'seek' which in this case takes two arguments
-    /// mpv.run_command("seek", &vec!["0", "absolute"]);
+    /// mpv.run_command("seek", &["0", "absolute"]);
     /// ```
-    fn run_command(&self, command: &str, args: &Vec<&str>) -> Result<(), String>;
-    fn seek(&self, seconds: f64, option: SeekOptions) -> Result<(), String>;
-    fn set_loop_file(&self, option: Switch) -> Result<(), String>;
-    fn set_loop_playlist(&self, option: Switch) -> Result<(), String>;
-    fn set_mute(&self, option: Switch) -> Result<(), String>;
+    fn run_command(&self, command: &str, args: &[&str]) -> Result<(), Error>;
+    fn seek(&self, seconds: f64, option: SeekOptions) -> Result<(), Error>;
+    fn set_loop_file(&self, option: Switch) -> Result<(), Error>;
+    fn set_loop_playlist(&self, option: Switch) -> Result<(), Error>;
+    fn set_mute(&self, option: Switch) -> Result<(), Error>;
 
     /// #Description
     ///
@@ -224,135 +281,133 @@ pub trait Commands {
     fn set_property<T: SetPropertyTypeHandler<T>>(&self,
                                                   property: &str,
                                                   value: T)
-                                                  -> Result<(), String>;
-    fn set_speed(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), String>;
-    fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), String>;
-    fn stop(&self) -> Result<(), String>;
-    fn toggle(&self) -> Result<(), String>;
+                                                  -> Result<(), Error>;
+    fn set_speed(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), Error>;
+    fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), Error>;
+    fn stop(&self) -> Result<(), Error>;
+    fn toggle(&self) -> Result<(), Error>;
 }
 
 impl Commands for Mpv {
-    fn get_metadata(&self) -> Result<HashMap<String, String>, String> {
+    fn get_metadata(&self) -> Result<HashMap<String, String>, Error> {
         match get_mpv_property(self, "metadata") {
             Ok(map) => Ok(map),
             Err(err) => Err(err),
         }
     }
 
-    fn get_playlist(&self) -> Result<Playlist, String> {
+    fn get_playlist(&self) -> Result<Playlist, Error> {
         match get_mpv_property::<Vec<PlaylistEntry>>(self, "playlist") {
             Ok(entries) => Ok(Playlist(entries)),
             Err(msg) => Err(msg),
         }
     }
 
-    fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, String> {
+    fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, Error> {
         T::get_property_generic(self, property)
     }
 
-    fn get_property_string(&self, property: &str) -> Result<String, String> {
+    fn get_property_string(&self, property: &str) -> Result<String, Error> {
         get_mpv_property_string(self, property)
     }
 
-    fn kill(&self) -> Result<(), String> {
-        run_mpv_command(self, "quit", &vec![])
+    fn kill(&self) -> Result<(), Error> {
+        run_mpv_command(self, "quit", &[])
     }
 
     fn listen(&self, tx: &Sender<String>) {
         listen(self, tx);
     }
 
-    fn next(&self) -> Result<(), String> {
-        run_mpv_command(self, "playlist-next", &vec![])
+    fn listen_raw(&self, tx: &Sender<String>) {
+        listen_raw(self, tx);
     }
 
-    fn observe_property(&self, id: &usize, property: &str) -> Result<(), String> {
+    fn next(&self) -> Result<(), Error> {
+        run_mpv_command(self, "playlist-next", &[])
+    }
+
+    fn observe_property(&self, id: &usize, property: &str) -> Result<(), Error> {
         observe_mpv_property(self, id, property)
     }
 
-    fn pause(&self) -> Result<(), String> {
+    fn pause(&self) -> Result<(), Error> {
         set_mpv_property(self, "pause", true)
     }
 
-    fn prev(&self) -> Result<(), String> {
-        run_mpv_command(self, "playlist-prev", &vec![])
+    fn prev(&self) -> Result<(), Error> {
+        run_mpv_command(self, "playlist-prev", &[])
     }
 
-    fn restart(&self) -> Result<(), String> {
-        run_mpv_command(self, "seek", &vec!["0", "absolute"])
+    fn restart(&self) -> Result<(), Error> {
+        run_mpv_command(self, "seek", &["0", "absolute"])
     }
 
-    fn run_command(&self, command: &str, args: &Vec<&str>) -> Result<(), String> {
+    fn run_command(&self, command: &str, args: &[&str]) -> Result<(), Error> {
         run_mpv_command(self, command, args)
     }
 
-    fn playlist_add(&self, file: &str, option: PlaylistAddOptions) -> Result<(), String> {
+    fn playlist_add(&self, file: &str, option: PlaylistAddOptions) -> Result<(), Error> {
         match option {
-            PlaylistAddOptions::Replace => {
-                run_mpv_command(self, "loadfile", &vec![file, "replace"])
-            }
-            PlaylistAddOptions::Append => run_mpv_command(self, "loadfile", &vec![file, "append"]),
+            PlaylistAddOptions::Replace => run_mpv_command(self, "loadfile", &[file, "replace"]),
+            PlaylistAddOptions::Append => run_mpv_command(self, "loadfile", &[file, "append"]),
             PlaylistAddOptions::AppendPlay => {
-                run_mpv_command(self, "loadfile", &vec![file, "append-play"])
+                run_mpv_command(self, "loadfile", &[file, "append-play"])
             }
         }
     }
 
-    fn playlist_clear(&self) -> Result<(), String> {
-        run_mpv_command(self, "playlist-clear", &vec![])
+    fn playlist_clear(&self) -> Result<(), Error> {
+        run_mpv_command(self, "playlist-clear", &[])
     }
 
-    fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), String> {
+    fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), Error> {
         run_mpv_command(self,
                         "playlist-remove",
-                        &vec![&from.to_string(), &to.to_string()])
+                        &[&from.to_string(), &to.to_string()])
     }
 
-    fn playlist_play_id(&self, id: usize) -> Result<(), String> {
+    fn playlist_play_id(&self, id: usize) -> Result<(), Error> {
         set_mpv_property(self, "playlist-pos", id)
     }
 
-    fn playlist_play_next(&self, id: usize) -> Result<(), String> {
+    fn playlist_play_next(&self, id: usize) -> Result<(), Error> {
         match get_mpv_property::<usize>(self, "playlist-pos") {
             Ok(current_id) => {
                 run_mpv_command(self,
                                 "playlist-move",
-                                &vec![&id.to_string(), &(current_id + 1).to_string()])
+                                &[&id.to_string(), &(current_id + 1).to_string()])
             }
             Err(msg) => Err(msg),
         }
     }
 
-    fn playlist_remove_id(&self, id: usize) -> Result<(), String> {
-        run_mpv_command(self, "playlist-remove", &vec![&id.to_string()])
+    fn playlist_remove_id(&self, id: usize) -> Result<(), Error> {
+        run_mpv_command(self, "playlist-remove", &[&id.to_string()])
     }
 
-    fn playlist_shuffle(&self) -> Result<(), String> {
-        run_mpv_command(self, "playlist-shuffle", &vec![])
+    fn playlist_shuffle(&self) -> Result<(), Error> {
+        run_mpv_command(self, "playlist-shuffle", &[])
     }
 
-    fn seek(&self, seconds: f64, option: SeekOptions) -> Result<(), String> {
+    fn seek(&self, seconds: f64, option: SeekOptions) -> Result<(), Error> {
         match option {
             SeekOptions::Absolute => {
-                run_mpv_command(self, "seek", &vec![&seconds.to_string(), "absolute"])
+                run_mpv_command(self, "seek", &[&seconds.to_string(), "absolute"])
             }
             SeekOptions::AbsolutePercent => {
-                run_mpv_command(self,
-                                "seek",
-                                &vec![&seconds.to_string(), "absolute-percent"])
+                run_mpv_command(self, "seek", &[&seconds.to_string(), "absolute-percent"])
             }
             SeekOptions::Relative => {
-                run_mpv_command(self, "seek", &vec![&seconds.to_string(), "relative"])
+                run_mpv_command(self, "seek", &[&seconds.to_string(), "relative"])
             }
             SeekOptions::RelativePercent => {
-                run_mpv_command(self,
-                                "seek",
-                                &vec![&seconds.to_string(), "relative-percent"])
+                run_mpv_command(self, "seek", &[&seconds.to_string(), "relative-percent"])
             }
         }
     }
 
-    fn set_loop_file(&self, option: Switch) -> Result<(), String> {
+    fn set_loop_file(&self, option: Switch) -> Result<(), Error> {
         let mut enabled = false;
         match option {
             Switch::On => enabled = true,
@@ -376,7 +431,7 @@ impl Commands for Mpv {
         set_mpv_property(self, "loop-file", enabled)
     }
 
-    fn set_loop_playlist(&self, option: Switch) -> Result<(), String> {
+    fn set_loop_playlist(&self, option: Switch) -> Result<(), Error> {
         let mut enabled = false;
         match option {
             Switch::On => enabled = true,
@@ -400,7 +455,7 @@ impl Commands for Mpv {
         set_mpv_property(self, "loop-playlist", enabled)
     }
 
-    fn set_mute(&self, option: Switch) -> Result<(), String> {
+    fn set_mute(&self, option: Switch) -> Result<(), Error> {
         let mut enabled = false;
         match option {
             Switch::On => enabled = true,
@@ -420,11 +475,11 @@ impl Commands for Mpv {
     fn set_property<T: SetPropertyTypeHandler<T>>(&self,
                                                   property: &str,
                                                   value: T)
-                                                  -> Result<(), String> {
+                                                  -> Result<(), Error> {
         T::set_property_generic(self, property, value)
     }
 
-    fn set_speed(&self, input_speed: f64, option: NumberChangeOptions) -> Result<(), String> {
+    fn set_speed(&self, input_speed: f64, option: NumberChangeOptions) -> Result<(), Error> {
         match get_mpv_property::<f64>(self, "speed") {
             Ok(speed) => {
                 match option {
@@ -443,7 +498,7 @@ impl Commands for Mpv {
         }
     }
 
-    fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), String> {
+    fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), Error> {
         match get_mpv_property::<f64>(self, "volume") {
             Ok(volume) => {
                 match option {
@@ -462,11 +517,11 @@ impl Commands for Mpv {
         }
     }
 
-    fn stop(&self) -> Result<(), String> {
-        run_mpv_command(self, "stop", &vec![])
+    fn stop(&self) -> Result<(), Error> {
+        run_mpv_command(self, "stop", &[])
     }
 
-    fn toggle(&self) -> Result<(), String> {
+    fn toggle(&self) -> Result<(), Error> {
         match get_mpv_property::<bool>(self, "pause") {
             Ok(paused) => set_mpv_property(self, "pause", !paused),
             Err(msg) => Err(msg),

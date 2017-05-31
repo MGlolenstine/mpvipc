@@ -1,11 +1,10 @@
 use serde_json::{self, Value};
 use std::collections::HashMap;
-use std::error::Error;
 use std::io::BufReader;
 use std::io::prelude::*;
 use std::iter::Iterator;
 use std::sync::mpsc::Sender;
-use super::Mpv;
+use super::{Mpv, Error, ErrorCode};
 
 #[derive(Debug)]
 pub struct PlaylistEntry {
@@ -16,28 +15,28 @@ pub struct PlaylistEntry {
 }
 
 pub trait TypeHandler: Sized {
-    fn get_value(value: Value) -> Result<Self, String>;
+    fn get_value(value: Value) -> Result<Self, Error>;
     fn as_string(&self) -> String;
 }
 
 impl TypeHandler for String {
-    fn get_value(value: Value) -> Result<String, String> {
+    fn get_value(value: Value) -> Result<String, Error> {
         if let Value::Object(map) = value {
             if let Value::String(ref error) = map["error"] {
                 if error == "success" && map.contains_key("data") {
                     if let Value::String(ref s) = map["data"] {
                         Ok(s.to_string())
                     } else {
-                        Err("Value did not contain a String".to_string())
+                        Err(Error(ErrorCode::ValueDoesNotContainString))
                     }
                 } else {
-                    Err(error.to_string())
+                    Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err("Unexpected value received".to_string())
+                Err(Error(ErrorCode::UnexpectedValueReceived))
             }
         } else {
-            Err("Unexpected value received".to_string())
+            Err(Error(ErrorCode::UnexpectedValueReceived))
         }
     }
 
@@ -47,23 +46,23 @@ impl TypeHandler for String {
 }
 
 impl TypeHandler for bool {
-    fn get_value(value: Value) -> Result<bool, String> {
+    fn get_value(value: Value) -> Result<bool, Error> {
         if let Value::Object(map) = value {
             if let Value::String(ref error) = map["error"] {
                 if error == "success" && map.contains_key("data") {
                     if let Value::Bool(ref b) = map["data"] {
                         Ok(*b)
                     } else {
-                        Err("Value did not contain a bool".to_string())
+                        Err(Error(ErrorCode::ValueDoesNotContainBool))
                     }
                 } else {
-                    Err(error.to_string())
+                    Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err("Unexpected value received".to_string())
+                Err(Error(ErrorCode::UnexpectedValueReceived))
             }
         } else {
-            Err("Unexpected value received".to_string())
+            Err(Error(ErrorCode::UnexpectedValueReceived))
         }
     }
     fn as_string(&self) -> String {
@@ -76,23 +75,23 @@ impl TypeHandler for bool {
 }
 
 impl TypeHandler for f64 {
-    fn get_value(value: Value) -> Result<f64, String> {
+    fn get_value(value: Value) -> Result<f64, Error> {
         if let Value::Object(map) = value {
             if let Value::String(ref error) = map["error"] {
                 if error == "success" && map.contains_key("data") {
                     if let Value::Number(ref num) = map["data"] {
                         Ok(num.as_f64().unwrap())
                     } else {
-                        Err("Value did not contain a f64".to_string())
+                        Err(Error(ErrorCode::ValueDoesNotContainF64))
                     }
                 } else {
-                    Err(error.to_string())
+                    Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err("Unexpected value received".to_string())
+                Err(Error(ErrorCode::UnexpectedValueReceived))
             }
         } else {
-            Err("Unexpected value received".to_string())
+            Err(Error(ErrorCode::UnexpectedValueReceived))
         }
     }
 
@@ -102,23 +101,23 @@ impl TypeHandler for f64 {
 }
 
 impl TypeHandler for usize {
-    fn get_value(value: Value) -> Result<usize, String> {
+    fn get_value(value: Value) -> Result<usize, Error> {
         if let Value::Object(map) = value {
             if let Value::String(ref error) = map["error"] {
                 if error == "success" && map.contains_key("data") {
                     if let Value::Number(ref num) = map["data"] {
                         Ok(num.as_u64().unwrap() as usize)
                     } else {
-                        Err("Value did not contain an usize".to_string())
+                        Err(Error(ErrorCode::ValueDoesNotContainUsize))
                     }
                 } else {
-                    Err(error.to_string())
+                    Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err("Unexpected value received".to_string())
+                Err(Error(ErrorCode::UnexpectedValueReceived))
             }
         } else {
-            Err("Unexpected value received".to_string())
+            Err(Error(ErrorCode::UnexpectedValueReceived))
         }
     }
 
@@ -128,7 +127,7 @@ impl TypeHandler for usize {
 }
 
 impl TypeHandler for HashMap<String, String> {
-    fn get_value(value: Value) -> Result<HashMap<String, String>, String> {
+    fn get_value(value: Value) -> Result<HashMap<String, String>, Error> {
         if let Value::Object(map) = value {
             if let Value::String(ref error) = map["error"] {
                 if error == "success" && map.contains_key("data") {
@@ -142,16 +141,16 @@ impl TypeHandler for HashMap<String, String> {
                         let output_map = output_map;
                         Ok(output_map)
                     } else {
-                        Err("Value did not contain a HashMap".to_string())
+                        Err(Error(ErrorCode::ValueDoesNotContainHashMap))
                     }
                 } else {
-                    Err(error.to_string())
+                    Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err("Unexpected value received".to_string())
+                Err(Error(ErrorCode::UnexpectedValueReceived))
             }
         } else {
-            Err("Unexpected value received".to_string())
+            Err(Error(ErrorCode::UnexpectedValueReceived))
         }
     }
 
@@ -161,7 +160,7 @@ impl TypeHandler for HashMap<String, String> {
 }
 
 impl TypeHandler for Vec<PlaylistEntry> {
-    fn get_value(value: Value) -> Result<Vec<PlaylistEntry>, String> {
+    fn get_value(value: Value) -> Result<Vec<PlaylistEntry>, Error> {
         if let Value::Object(map) = value {
             if let Value::String(ref error) = map["error"] {
                 if error == "success" && map.contains_key("data") {
@@ -190,16 +189,16 @@ impl TypeHandler for Vec<PlaylistEntry> {
                         let output = output;
                         Ok(output)
                     } else {
-                        Err("Value did not contain a playlist".to_string())
+                        Err(Error(ErrorCode::ValueDoesNotContainPlaylist))
                     }
                 } else {
-                    Err(error.to_string())
+                    Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err("Unexpected value received".to_string())
+                Err(Error(ErrorCode::UnexpectedValueReceived))
             }
         } else {
-            Err("Unexpected value received".to_string())
+            Err(Error(ErrorCode::UnexpectedValueReceived))
         }
     }
 
@@ -208,16 +207,16 @@ impl TypeHandler for Vec<PlaylistEntry> {
     }
 }
 
-pub fn get_mpv_property<T: TypeHandler>(instance: &Mpv, property: &str) -> Result<T, String> {
+pub fn get_mpv_property<T: TypeHandler>(instance: &Mpv, property: &str) -> Result<T, Error> {
     let ipc_string = format!("{{ \"command\": [\"get_property\",\"{}\"] }}\n", property);
 
     match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(val) => T::get_value(val),
-        Err(why) => Err(format!("Error while getting property: {}", why)),
+        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
     }
 }
 
-pub fn get_mpv_property_string(instance: &Mpv, property: &str) -> Result<String, String> {
+pub fn get_mpv_property_string(instance: &Mpv, property: &str) -> Result<String, Error> {
     let ipc_string = format!("{{ \"command\": [\"get_property\",\"{}\"] }}\n", property);
     match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(val) => {
@@ -230,39 +229,39 @@ pub fn get_mpv_property_string(instance: &Mpv, property: &str) -> Result<String,
                             Value::String(ref s) => Ok(s.to_string()),
                             Value::Array(ref array) => Ok(format!("{:?}", array)),
                             Value::Object(ref map) => Ok(format!("{:?}", map)),
-                            _ => Err("Value contains an unsupported type".to_string()),
+                            _ => Err(Error(ErrorCode::UnsupportedType)),
                         }
                     } else {
-                        Err(error.to_string())
+                        Err(Error(ErrorCode::MpvError(error.to_string())))
                     }
                 } else {
-                    Err("Unexpected value received".to_string())
+                    Err(Error(ErrorCode::UnexpectedValueReceived))
                 }
             } else {
-                Err("Unexpected value received".to_string())
+                Err(Error(ErrorCode::UnexpectedValueReceived))
             }
         }
-        Err(why) => Err(format!("Error while getting property: {}", why)),
+        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
     }
 }
 
 pub fn set_mpv_property<T: TypeHandler>(instance: &Mpv,
                                         property: &str,
                                         value: T)
-                                        -> Result<(), String> {
+                                        -> Result<(), Error> {
     let ipc_string = format!("{{ \"command\": [\"set_property\", \"{}\", {}] }}\n",
                              property,
                              value.as_string());
     match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(_) => Ok(()),
-        Err(why) => Err(why.description().to_string()),
+        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
     }
 }
 
-pub fn run_mpv_command(instance: &Mpv, command: &str, args: &Vec<&str>) -> Result<(), String> {
+pub fn run_mpv_command(instance: &Mpv, command: &str, args: &[&str]) -> Result<(), Error> {
     let mut ipc_string = format!("{{ \"command\": [\"{}\"", command);
     if args.len() > 0 {
-        for arg in args.iter() {
+        for arg in args {
             ipc_string.push_str(&format!(", \"{}\"", arg));
         }
     }
@@ -274,18 +273,17 @@ pub fn run_mpv_command(instance: &Mpv, command: &str, args: &Vec<&str>) -> Resul
                 if error == "success" {
                     Ok(())
                 } else {
-                    Err(error.to_string())
+                    Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                //Ok(())
-                Err("Error: Unexpected result received".to_string())
+                Err(Error(ErrorCode::UnexpectedResult))
             }
         }
-        Err(why) => Err(why.description().to_string()),
+        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
     }
 }
 
-pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Result<(), String> {
+pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Result<(), Error> {
     let ipc_string = format!("{{ \"command\": [\"observe_property\", {}, \"{}\"] }}\n",
                              id,
                              property);
@@ -295,13 +293,13 @@ pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Resul
                 if error == "success" {
                     Ok(())
                 } else {
-                    Err(error.to_string())
+                    Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err("Unexpected result received".to_string())
+                Err(Error(ErrorCode::UnexpectedResult))
             }
         }
-        Err(why) => Err(why.description().to_string()),
+        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
     }
 }
 
@@ -324,15 +322,23 @@ pub fn listen(instance: &Mpv, tx: &Sender<String>) {
                 tx.send(name.to_string()).unwrap();
             }
         }
-        Err(why) => panic!("{}", why.description().to_string()),
+        Err(why) => panic!("{}", why.to_string()),
     }
+    response.clear();
+}
+
+pub fn listen_raw(instance: &Mpv, tx: &Sender<String>) {
+    let mut response = String::new();
+    let mut reader = BufReader::new(instance);
+    reader.read_line(&mut response).unwrap();
+    tx.send(response.clone()).unwrap();
     response.clear();
 }
 
 fn send_command_sync(instance: &Mpv, command: &str) -> String {
     let mut stream = instance;
     match stream.write_all(command.as_bytes()) {
-        Err(why) => panic!("Error: Could not write to socket: {}", why.description()),
+        Err(why) => panic!("Error: Could not write to socket: {}", why),
         Ok(_) => {
             let mut response = String::new();
             {
