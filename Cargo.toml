@@ -6,6 +6,7 @@ description = "A small library which provides bindings to control existing mpv i
 license = "GPL-3.0"
 homepage = "https://github.com/freijon/mpvipc"
 repository = "https://github.com/freijon/mpvipc"
+documentation = "https://docs.rs/mpvipc/"
 
 
 [dependencies]
