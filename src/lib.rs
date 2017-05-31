@@ -208,7 +208,7 @@ pub trait Commands {
 
     /// #Description
     ///
-    /// Retrieves the property value from mpv. Implemented for the following types:
+    /// Retrieves the property value from mpv.
     /// The result is always of type String, regardless of the type of the value of the mpv property
     ///
     /// ##Input arguments
@@ -241,6 +241,11 @@ pub trait Commands {
     /// #Description
     ///
     /// Runs mpv commands. The arguments are passed as a String-Vector reference:
+    ///
+    /// ##Input arguments
+    ///
+    /// - **command**   defines the mpv command that should be executed
+    /// - **args**      a slice of &str's which define the arguments
     ///
     /// #Example
     /// ```
