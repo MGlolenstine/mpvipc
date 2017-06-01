@@ -4,7 +4,7 @@ use std::io::BufReader;
 use std::io::prelude::*;
 use std::iter::Iterator;
 use std::sync::mpsc::Sender;
-use super::{Mpv, Error, ErrorCode};
+use super::*;
 
 #[derive(Debug)]
 pub struct PlaylistEntry {
@@ -33,10 +33,10 @@ impl TypeHandler for String {
                     Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err(Error(ErrorCode::UnexpectedValueReceived))
+                Err(Error(ErrorCode::UnexpectedValue))
             }
         } else {
-            Err(Error(ErrorCode::UnexpectedValueReceived))
+            Err(Error(ErrorCode::UnexpectedValue))
         }
     }
 
@@ -59,10 +59,10 @@ impl TypeHandler for bool {
                     Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err(Error(ErrorCode::UnexpectedValueReceived))
+                Err(Error(ErrorCode::UnexpectedValue))
             }
         } else {
-            Err(Error(ErrorCode::UnexpectedValueReceived))
+            Err(Error(ErrorCode::UnexpectedValue))
         }
     }
     fn as_string(&self) -> String {
@@ -88,10 +88,10 @@ impl TypeHandler for f64 {
                     Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err(Error(ErrorCode::UnexpectedValueReceived))
+                Err(Error(ErrorCode::UnexpectedValue))
             }
         } else {
-            Err(Error(ErrorCode::UnexpectedValueReceived))
+            Err(Error(ErrorCode::UnexpectedValue))
         }
     }
 
@@ -114,10 +114,10 @@ impl TypeHandler for usize {
                     Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err(Error(ErrorCode::UnexpectedValueReceived))
+                Err(Error(ErrorCode::UnexpectedValue))
             }
         } else {
-            Err(Error(ErrorCode::UnexpectedValueReceived))
+            Err(Error(ErrorCode::UnexpectedValue))
         }
     }
 
@@ -147,10 +147,10 @@ impl TypeHandler for HashMap<String, String> {
                     Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err(Error(ErrorCode::UnexpectedValueReceived))
+                Err(Error(ErrorCode::UnexpectedValue))
             }
         } else {
-            Err(Error(ErrorCode::UnexpectedValueReceived))
+            Err(Error(ErrorCode::UnexpectedValue))
         }
     }
 
@@ -195,10 +195,10 @@ impl TypeHandler for Vec<PlaylistEntry> {
                     Err(Error(ErrorCode::MpvError(error.to_string())))
                 }
             } else {
-                Err(Error(ErrorCode::UnexpectedValueReceived))
+                Err(Error(ErrorCode::UnexpectedValue))
             }
         } else {
-            Err(Error(ErrorCode::UnexpectedValueReceived))
+            Err(Error(ErrorCode::UnexpectedValue))
         }
     }
 
@@ -235,10 +235,10 @@ pub fn get_mpv_property_string(instance: &Mpv, property: &str) -> Result<String,
                         Err(Error(ErrorCode::MpvError(error.to_string())))
                     }
                 } else {
-                    Err(Error(ErrorCode::UnexpectedValueReceived))
+                    Err(Error(ErrorCode::UnexpectedValue))
                 }
             } else {
-                Err(Error(ErrorCode::UnexpectedValueReceived))
+                Err(Error(ErrorCode::UnexpectedValue))
             }
         }
         Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
@@ -312,14 +312,33 @@ pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Resul
 /// ```
 /// listen("/tmp/mpvsocket");
 /// ```
-pub fn listen(instance: &Mpv, tx: &Sender<String>) {
+pub fn listen(instance: &Mpv, tx: &Sender<Event>) {
     let mut response = String::new();
-    let mut reader = BufReader::new(instance);
+    let mut reader = BufReader::new(&instance.0);
     reader.read_line(&mut response).unwrap();
     match serde_json::from_str::<Value>(&response) {
         Ok(e) => {
             if let Value::String(ref name) = e["event"] {
-                tx.send(name.to_string()).unwrap();
+                let event: Event = match name.as_str() {
+                    "shutdown" => Event::Shutdown,
+                    "start-file" => Event::StartFile,
+                    "file-loaded" => Event::FileLoaded,
+                    "seek" => Event::Seek,
+                    "playback-restart" => Event::PlaybackRestart,
+                    "idle" => Event::Idle,
+                    "tick" => Event::Tick,
+                    "video-reconfig" => Event::VideoReconfig,
+                    "audio-reconfig" => Event::AudioReconfig,
+                    "tracks-changed" => Event::TracksChanged,
+                    "track-switched" => Event::TrackSwitched,
+                    "pause" => Event::Pause,
+                    "unpause" => Event::Unpause,
+                    "metadata-update" => Event::MetadataUpdate,
+                    "chapter-change" => Event::ChapterChange,
+                    "end-file" => Event::EndFile,
+                    _ => Event::Unimplemented,
+                };
+                tx.send(event).unwrap();
             }
         }
         Err(why) => panic!("{}", why.to_string()),
@@ -329,14 +348,14 @@ pub fn listen(instance: &Mpv, tx: &Sender<String>) {
 
 pub fn listen_raw(instance: &Mpv, tx: &Sender<String>) {
     let mut response = String::new();
-    let mut reader = BufReader::new(instance);
+    let mut reader = BufReader::new(&instance.0);
     reader.read_line(&mut response).unwrap();
     tx.send(response.clone()).unwrap();
     response.clear();
 }
 
 fn send_command_sync(instance: &Mpv, command: &str) -> String {
-    let mut stream = instance;
+    let mut stream = &instance.0;
     match stream.write_all(command.as_bytes()) {
         Err(why) => panic!("Error: Could not write to socket: {}", why),
         Ok(_) => {
