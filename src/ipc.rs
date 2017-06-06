@@ -126,20 +126,13 @@ impl TypeHandler for usize {
     }
 }
 
-impl TypeHandler for HashMap<String, String> {
-    fn get_value(value: Value) -> Result<HashMap<String, String>, Error> {
+impl TypeHandler for HashMap<String, MpvDataType> {
+    fn get_value(value: Value) -> Result<HashMap<String, MpvDataType>, Error> {
         if let Value::Object(map) = value {
             if let Value::String(ref error) = map["error"] {
                 if error == "success" && map.contains_key("data") {
                     if let Value::Object(ref inner_map) = map["data"] {
-                        let mut output_map: HashMap<String, String> = HashMap::new();
-                        for (ref key, ref value) in inner_map.iter() {
-                            if let Value::String(ref val) = **value {
-                                output_map.insert(key.to_string(), val.to_string());
-                            }
-                        }
-                        let output_map = output_map;
-                        Ok(output_map)
+                        Ok(json_map_to_hashmap(inner_map))
                     } else {
                         Err(Error(ErrorCode::ValueDoesNotContainHashMap))
                     }
@@ -165,29 +158,7 @@ impl TypeHandler for Vec<PlaylistEntry> {
             if let Value::String(ref error) = map["error"] {
                 if error == "success" && map.contains_key("data") {
                     if let Value::Array(ref playlist_vec) = map["data"] {
-                        let mut output: Vec<PlaylistEntry> = Vec::new();
-                        for (id, entry) in playlist_vec.iter().enumerate() {
-                            let mut filename: String = String::new();
-                            let mut title: String = String::new();
-                            let mut current: bool = false;
-                            if let Value::String(ref f) = entry["filename"] {
-                                filename = f.to_string();
-                            }
-                            if let Value::String(ref t) = entry["title"] {
-                                title = t.to_string();
-                            }
-                            if let Value::Bool(ref b) = entry["current"] {
-                                current = *b;
-                            }
-                            output.push(PlaylistEntry {
-                                            id: id,
-                                            filename: filename,
-                                            title: title,
-                                            current: current,
-                                        });
-                        }
-                        let output = output;
-                        Ok(output)
+                        Ok(json_array_to_playlist(playlist_vec))
                     } else {
                         Err(Error(ErrorCode::ValueDoesNotContainPlaylist))
                     }
@@ -312,38 +283,129 @@ pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Resul
 /// ```
 /// listen("/tmp/mpvsocket");
 /// ```
-pub fn listen(instance: &Mpv, tx: &Sender<Event>) {
+pub fn listen(instance: &Mpv, tx: &Sender<Event>) -> Result<(), Error> {
     let mut response = String::new();
     let mut reader = BufReader::new(&instance.0);
     reader.read_line(&mut response).unwrap();
     match serde_json::from_str::<Value>(&response) {
         Ok(e) => {
             if let Value::String(ref name) = e["event"] {
-                let event: Event = match name.as_str() {
-                    "shutdown" => Event::Shutdown,
-                    "start-file" => Event::StartFile,
-                    "file-loaded" => Event::FileLoaded,
-                    "seek" => Event::Seek,
-                    "playback-restart" => Event::PlaybackRestart,
-                    "idle" => Event::Idle,
-                    "tick" => Event::Tick,
-                    "video-reconfig" => Event::VideoReconfig,
-                    "audio-reconfig" => Event::AudioReconfig,
-                    "tracks-changed" => Event::TracksChanged,
-                    "track-switched" => Event::TrackSwitched,
-                    "pause" => Event::Pause,
-                    "unpause" => Event::Unpause,
-                    "metadata-update" => Event::MetadataUpdate,
-                    "chapter-change" => Event::ChapterChange,
-                    "end-file" => Event::EndFile,
-                    _ => Event::Unimplemented,
+                let event: Event;
+                match name.as_str() {
+                    "shutdown" => {
+                        event = Event::Shutdown;
+                    }
+                    "start-file" => {
+                        event = Event::StartFile;
+                    }
+                    "file-loaded" => {
+                        event = Event::FileLoaded;
+                    }
+                    "seek" => {
+                        event = Event::Seek;
+                    }
+                    "playback-restart" => {
+                        event = Event::PlaybackRestart;
+                    }
+                    "idle" => {
+                        event = Event::Idle;
+                    }
+                    "tick" => {
+                        event = Event::Tick;
+                    }
+                    "video-reconfig" => {
+                        event = Event::VideoReconfig;
+                    }
+                    "audio-reconfig" => {
+                        event = Event::AudioReconfig;
+                    }
+                    "tracks-changed" => {
+                        event = Event::TracksChanged;
+                    }
+                    "track-switched" => {
+                        event = Event::TrackSwitched;
+                    }
+                    "pause" => {
+                        event = Event::Pause;
+                    }
+                    "unpause" => {
+                        event = Event::Unpause;
+                    }
+                    "metadata-update" => {
+                        event = Event::MetadataUpdate;
+                    }
+                    "chapter-change" => {
+                        event = Event::ChapterChange;
+                    }
+                    "end-file" => {
+                        event = Event::EndFile;
+                    }
+                    "property-change" => {
+                        let name: String;
+                        let id: usize;
+                        let data: MpvDataType;
+
+                        if let Value::String(ref n) = e["name"] {
+                            name = n.to_string();
+                        } else {
+                            return Err(Error(ErrorCode::JsonContainsUnexptectedType));
+                        }
+
+                        if let Value::Number(ref n) = e["id"] {
+                            id = n.as_u64().unwrap() as usize;
+                        } else {
+                            return Err(Error(ErrorCode::JsonContainsUnexptectedType));
+                        }
+
+                        match e["data"] {
+                            Value::String(ref n) => {
+                                data = MpvDataType::String(n.to_string());
+                            }
+
+                            Value::Array(ref a) => {
+                                if name == "playlist".to_string() {
+                                    data =
+                                        MpvDataType::Playlist(Playlist(json_array_to_playlist(a)));
+                                } else {
+                                    data = MpvDataType::Array(json_array_to_vec(a));
+                                }
+                            }
+
+                            Value::Bool(ref b) => {
+                                data = MpvDataType::Bool(*b);
+                            }
+
+                            Value::Number(ref n) => {
+                                if n.is_u64() {
+                                    data = MpvDataType::Usize(n.as_u64().unwrap() as usize);
+                                } else if n.is_f64() {
+                                    data = MpvDataType::Double(n.as_f64().unwrap());
+                                } else {
+                                    return Err(Error(ErrorCode::JsonContainsUnexptectedType));
+                                }
+                            }
+
+                            Value::Object(ref m) => {
+                                data = MpvDataType::HashMap(json_map_to_hashmap(m));
+                            }
+
+                            _ => {
+                                unimplemented!();
+                            }
+                        }
+
+                        event = Event::PropertyChange { name, id, data }
+                    }
+                    _ => {
+                        event = Event::Unimplemented;
+                    }
                 };
                 tx.send(event).unwrap();
             }
         }
-        Err(why) => panic!("{}", why.to_string()),
+        Err(why) => return Err(Error(ErrorCode::JsonParseError(why.to_string()))),
     }
-    response.clear();
+    Ok(())
 }
 
 pub fn listen_raw(instance: &Mpv, tx: &Sender<String>) {
@@ -370,4 +432,123 @@ fn send_command_sync(instance: &Mpv, command: &str) -> String {
             response
         }
     }
+}
+
+fn json_map_to_hashmap(map: &serde_json::map::Map<String, Value>) -> HashMap<String, MpvDataType> {
+    let mut output_map: HashMap<String, MpvDataType> = HashMap::new();
+    for (ref key, ref value) in map.iter() {
+        match **value {
+            Value::Array(ref array) => {
+                output_map.insert(key.to_string(),
+                                  MpvDataType::Array(json_array_to_vec(array)));
+            }
+            Value::Bool(ref b) => {
+                output_map.insert(key.to_string(), MpvDataType::Bool(*b));
+            }
+            Value::Number(ref n) => {
+                if n.is_u64() {
+                    output_map.insert(key.to_string(),
+                                      MpvDataType::Usize(n.as_u64().unwrap() as usize));
+                } else if n.is_f64() {
+                    output_map.insert(key.to_string(), MpvDataType::Double(n.as_f64().unwrap()));
+                } else {
+                    panic!("unimplemented number");
+                }
+            }
+            Value::String(ref s) => {
+                output_map.insert(key.to_string(), MpvDataType::String(s.to_string()));
+            }
+            Value::Object(ref m) => {
+                output_map.insert(key.to_string(),
+                                  MpvDataType::HashMap(json_map_to_hashmap(m)));
+            }
+            Value::Null => {
+                unimplemented!();
+            }
+        }
+    }
+    output_map
+}
+
+fn json_array_to_vec(array: &Vec<Value>) -> Vec<MpvDataType> {
+    let mut output: Vec<MpvDataType> = Vec::new();
+    if array.len() > 0 {
+        match array[0] {
+            Value::Array(_) => {
+                for entry in array {
+                    if let Value::Array(ref a) = *entry {
+                        output.push(MpvDataType::Array(json_array_to_vec(a)));
+                    }
+                }
+            }
+
+            Value::Bool(_) => {
+                for entry in array {
+                    if let Value::Bool(ref b) = *entry {
+                        output.push(MpvDataType::Bool(*b));
+                    }
+                }
+            }
+
+            Value::Number(_) => {
+                for entry in array {
+                    if let Value::Number(ref n) = *entry {
+                        if n.is_u64() {
+                            output.push(MpvDataType::Usize(n.as_u64().unwrap() as usize));
+                        } else if n.is_f64() {
+                            output.push(MpvDataType::Double(n.as_f64().unwrap()));
+                        } else {
+                            panic!("unimplemented number");
+                        }
+                    }
+                }
+            }
+
+            Value::Object(_) => {
+                for entry in array {
+                    if let Value::Object(ref map) = *entry {
+                        output.push(MpvDataType::HashMap(json_map_to_hashmap(map)));
+                    }
+                }
+            }
+
+            Value::String(_) => {
+                for entry in array {
+                    if let Value::String(ref s) = *entry {
+                        output.push(MpvDataType::String(s.to_string()));
+                    }
+                }
+            }
+
+            Value::Null => {
+                unimplemented!();
+            }
+        }
+    }
+    output
+}
+
+fn json_array_to_playlist(array: &Vec<Value>) -> Vec<PlaylistEntry> {
+    let mut output: Vec<PlaylistEntry> = Vec::new();
+    for (id, entry) in array.iter().enumerate() {
+        let mut filename: String = String::new();
+        let mut title: String = String::new();
+        let mut current: bool = false;
+        if let Value::String(ref f) = entry["filename"] {
+            filename = f.to_string();
+        }
+        if let Value::String(ref t) = entry["title"] {
+            title = t.to_string();
+        }
+        if let Value::Bool(ref b) = entry["current"] {
+            current = *b;
+        }
+        output.push(PlaylistEntry {
+                        id,
+                        filename,
+                        title,
+                        current,
+                    });
+    }
+    output
 }

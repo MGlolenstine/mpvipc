@@ -39,21 +39,23 @@ pub enum Event {
     MetadataUpdate,
     Seek,
     PlaybackRestart,
-    // PropertyChange {
-    //     name: &'static str,
-    //     change: MpvDataType,
-    //     reply_userdata: u32,
-    // },
+    PropertyChange {
+        name: String,
+        id: usize,
+        data: MpvDataType,
+    },
     ChapterChange,
     Unimplemented,
 }
 
+#[derive(Debug)]
 pub enum MpvDataType {
     Bool(bool),
     String(String),
     Double(f64),
     Usize(usize),
-    HashMap(HashMap<String, String>),
+    HashMap(HashMap<String, MpvDataType>),
+    Array(Vec<MpvDataType>),
     Playlist(Playlist),
 }
 
@@ -92,6 +94,7 @@ pub enum ErrorCode {
     MpvError(String),
     JsonParseError(String),
     ConnectError(String),
+    JsonContainsUnexptectedType,
     UnexpectedResult,
     UnexpectedValue,
     UnsupportedType,
@@ -104,6 +107,7 @@ pub enum ErrorCode {
 }
 
 pub struct Mpv(UnixStream);
+#[derive(Debug)]
 pub struct Playlist(pub Vec<PlaylistEntry>);
 #[derive(Debug)]
 pub struct Error(pub ErrorCode);
@@ -113,6 +117,16 @@ impl Drop for Mpv {
         self.0
             .shutdown(std::net::Shutdown::Both)
             .expect("stream shutdown");
+    }
+}
+
+impl Clone for Mpv {
+    fn clone(&self) -> Self {
+        Mpv(self.0.try_clone().expect("cloning UnixStream"))
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        *self = Mpv(source.0.try_clone().expect("cloning UnixStream"));
     }
 }
 
@@ -129,6 +143,9 @@ impl Display for ErrorCode {
             ErrorCode::JsonParseError(ref msg) => f.write_str(&format!("JsonParseError: {}", msg)),
             ErrorCode::MpvError(ref msg) => {
                 f.write_str(&format!("mpv returned an error value: {}", msg))
+            }
+            ErrorCode::JsonContainsUnexptectedType => {
+                f.write_str("Mpv sent a value with an unexpected type")
             }
             ErrorCode::UnexpectedResult => f.write_str("Unexpected result received"),
             ErrorCode::UnexpectedValue => f.write_str("Unexpected value received"),
@@ -189,11 +206,11 @@ impl GetPropertyTypeHandler for Vec<PlaylistEntry> {
     }
 }
 
-impl GetPropertyTypeHandler for HashMap<String, String> {
+impl GetPropertyTypeHandler for HashMap<String, MpvDataType> {
     fn get_property_generic(instance: &Mpv,
                             property: &str)
-                            -> Result<HashMap<String, String>, Error> {
-        get_mpv_property::<HashMap<String, String>>(instance, property)
+                            -> Result<HashMap<String, MpvDataType>, Error> {
+        get_mpv_property::<HashMap<String, MpvDataType>>(instance, property)
     }
 }
 
@@ -233,7 +250,7 @@ impl Mpv {
         }
     }
 
-    pub fn get_metadata(&self) -> Result<HashMap<String, String>, Error> {
+    pub fn get_metadata(&self) -> Result<HashMap<String, MpvDataType>, Error> {
         match get_mpv_property(self, "metadata") {
             Ok(map) => Ok(map),
             Err(err) => Err(err),
@@ -296,8 +313,26 @@ impl Mpv {
         run_mpv_command(self, "quit", &[])
     }
 
-    pub fn event_listen(&self, tx: &Sender<Event>) {
-        listen(self, tx);
+    /// #Description
+    ///
+    /// Listens for mpv events and triggers the channel once an event has been received.
+    ///
+    /// ##Input arguments
+    ///
+    /// - **tx** A reference to the sender halve of the channel
+    ///
+    /// #Example
+    ///
+    /// ```
+    /// let (tx, rx) = std::sync::mpsc::channel();
+    /// loop {
+    ///     mpv.event_listen(&tx);
+    ///     let event = rx.recv().unwrap();
+    ///     println!("{:?}", event);
+    /// }
+    /// ```
+    pub fn event_listen(&self, tx: &Sender<Event>) -> Result<(), Error> {
+        listen(self, tx)
     }
 
     pub fn event_listen_raw(&self, tx: &Sender<String>) {
