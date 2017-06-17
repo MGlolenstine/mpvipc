@@ -7,7 +7,7 @@ use ipc::*;
 use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::os::unix::net::UnixStream;
-use std::sync::mpsc::Sender;
+use std::io::{Read, BufReader};
 
 #[derive(Debug)]
 pub enum Event {
@@ -50,13 +50,14 @@ pub enum Event {
 
 #[derive(Debug)]
 pub enum MpvDataType {
-    Bool(bool),
-    String(String),
-    Double(f64),
-    Usize(usize),
-    HashMap(HashMap<String, MpvDataType>),
     Array(Vec<MpvDataType>),
+    Bool(bool),
+    Double(f64),
+    HashMap(HashMap<String, MpvDataType>),
+    Null,
     Playlist(Playlist),
+    String(String),
+    Usize(usize),
 }
 
 pub enum NumberChangeOptions {
@@ -106,7 +107,10 @@ pub enum ErrorCode {
     ValueDoesNotContainUsize,
 }
 
-pub struct Mpv(UnixStream);
+pub struct Mpv {
+    stream: UnixStream,
+    reader: BufReader<UnixStream>,
+}
 #[derive(Debug)]
 pub struct Playlist(pub Vec<PlaylistEntry>);
 #[derive(Debug)]
@@ -114,19 +118,27 @@ pub struct Error(pub ErrorCode);
 
 impl Drop for Mpv {
     fn drop(&mut self) {
-        self.0
-            .shutdown(std::net::Shutdown::Both)
-            .expect("stream shutdown");
+        self.disconnect();
     }
 }
 
 impl Clone for Mpv {
     fn clone(&self) -> Self {
-        Mpv(self.0.try_clone().expect("cloning UnixStream"))
+        let stream = self.stream.try_clone().expect("cloning UnixStream");
+        let cloned_stream = stream.try_clone().expect("cloning UnixStream");
+        Mpv {
+            stream,
+            reader: BufReader::new(cloned_stream),
+        }
     }
 
     fn clone_from(&mut self, source: &Self) {
-        *self = Mpv(source.0.try_clone().expect("cloning UnixStream"));
+        let stream = source.stream.try_clone().expect("cloning UnixStream");
+        let cloned_stream = stream.try_clone().expect("cloning UnixStream");
+        *self = Mpv {
+            stream,
+            reader: BufReader::new(cloned_stream),
+        }
     }
 }
 
@@ -157,7 +169,9 @@ impl Display for ErrorCode {
                 f.write_str("The received value is not of type \'std::f64\'")
             }
             ErrorCode::ValueDoesNotContainHashMap => {
-                f.write_str("The received value is not of type \'std::collections::HashMap\'")
+                f.write_str(
+                    "The received value is not of type \'std::collections::HashMap\'",
+                )
             }
             ErrorCode::ValueDoesNotContainPlaylist => {
                 f.write_str("The received value is not of type \'mpvipc::Playlist\'")
@@ -207,9 +221,10 @@ impl GetPropertyTypeHandler for Vec<PlaylistEntry> {
 }
 
 impl GetPropertyTypeHandler for HashMap<String, MpvDataType> {
-    fn get_property_generic(instance: &Mpv,
-                            property: &str)
-                            -> Result<HashMap<String, MpvDataType>, Error> {
+    fn get_property_generic(
+        instance: &Mpv,
+        property: &str,
+    ) -> Result<HashMap<String, MpvDataType>, Error> {
         get_mpv_property::<HashMap<String, MpvDataType>>(instance, property)
     }
 }
@@ -245,9 +260,30 @@ impl SetPropertyTypeHandler<usize> for usize {
 impl Mpv {
     pub fn connect(socket: &str) -> Result<Mpv, Error> {
         match UnixStream::connect(socket) {
-            Ok(stream) => Ok(Mpv(stream)),
+            Ok(stream) => {
+                let cloned_stream = stream.try_clone().expect("cloning UnixStream");
+                return Ok(Mpv {
+                    stream,
+                    reader: BufReader::new(cloned_stream),
+                });
+            }
             Err(internal_error) => Err(Error(ErrorCode::ConnectError(internal_error.to_string()))),
         }
+    }
+
+    pub fn disconnect(&self) {
+        let mut stream = &self.stream;
+        stream.shutdown(std::net::Shutdown::Both).expect(
+            "socket disconnect",
+        );
+        let mut buffer = [0; 32];
+        for _ in 0..stream.bytes().count() {
+            stream.read(&mut buffer[..]).unwrap();
+        }
+    }
+
+    pub fn get_stream_ref(&self) -> &UnixStream {
+        &self.stream
     }
 
     pub fn get_metadata(&self) -> Result<HashMap<String, MpvDataType>, Error> {
@@ -315,28 +351,23 @@ impl Mpv {
 
     /// #Description
     ///
-    /// Listens for mpv events and triggers the channel once an event has been received.
-    ///
-    /// ##Input arguments
-    ///
-    /// - **tx** A reference to the sender halve of the channel
+    /// Waits until an mpv event occurs and returns the Event.
     ///
     /// #Example
     ///
     /// ```
-    /// let (tx, rx) = std::sync::mpsc::channel();
+    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// loop {
-    ///     mpv.event_listen(&tx);
-    ///     let event = rx.recv().unwrap();
+    ///     let event = mpv.event_listen().unwrap();
     ///     println!("{:?}", event);
     /// }
     /// ```
-    pub fn event_listen(&self, tx: &Sender<Event>) -> Result<(), Error> {
-        listen(self, tx)
+    pub fn event_listen(&mut self) -> Result<Event, Error> {
+        listen(self)
     }
 
-    pub fn event_listen_raw(&self, tx: &Sender<String>) {
-        listen_raw(self, tx);
+    pub fn event_listen_raw(&mut self) -> String {
+        listen_raw(self)
     }
 
     pub fn next(&self) -> Result<(), Error> {
@@ -382,11 +413,12 @@ impl Mpv {
         run_mpv_command(self, command, args)
     }
 
-    pub fn playlist_add(&self,
-                        file: &str,
-                        file_type: PlaylistAddTypeOptions,
-                        option: PlaylistAddOptions)
-                        -> Result<(), Error> {
+    pub fn playlist_add(
+        &self,
+        file: &str,
+        file_type: PlaylistAddTypeOptions,
+        option: PlaylistAddOptions,
+    ) -> Result<(), Error> {
         match file_type {
             PlaylistAddTypeOptions::File => {
                 match option {
@@ -422,9 +454,7 @@ impl Mpv {
     }
 
     pub fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), Error> {
-        run_mpv_command(self,
-                        "playlist-remove",
-                        &[&from.to_string(), &to.to_string()])
+        run_mpv_command(self, "playlist-move", &[&from.to_string(), &to.to_string()])
     }
 
     pub fn playlist_play_id(&self, id: usize) -> Result<(), Error> {
@@ -434,9 +464,11 @@ impl Mpv {
     pub fn playlist_play_next(&self, id: usize) -> Result<(), Error> {
         match get_mpv_property::<usize>(self, "playlist-pos") {
             Ok(current_id) => {
-                run_mpv_command(self,
-                                "playlist-move",
-                                &[&id.to_string(), &(current_id + 1).to_string()])
+                run_mpv_command(
+                    self,
+                    "playlist-move",
+                    &[&id.to_string(), &(current_id + 1).to_string()],
+                )
             }
             Err(msg) => Err(msg),
         }
@@ -552,10 +584,11 @@ impl Mpv {
     /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// mpv.set_property("pause", true);
     /// ```
-    pub fn set_property<T: SetPropertyTypeHandler<T>>(&self,
-                                                      property: &str,
-                                                      value: T)
-                                                      -> Result<(), Error> {
+    pub fn set_property<T: SetPropertyTypeHandler<T>>(
+        &self,
+        property: &str,
+        value: T,
+    ) -> Result<(), Error> {
         T::set_property_generic(self, property, value)
     }
 

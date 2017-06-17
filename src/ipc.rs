@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::io::BufReader;
 use std::io::prelude::*;
 use std::iter::Iterator;
-use std::sync::mpsc::Sender;
 use super::*;
 
 #[derive(Debug)]
@@ -216,13 +215,16 @@ pub fn get_mpv_property_string(instance: &Mpv, property: &str) -> Result<String,
     }
 }
 
-pub fn set_mpv_property<T: TypeHandler>(instance: &Mpv,
-                                        property: &str,
-                                        value: T)
-                                        -> Result<(), Error> {
-    let ipc_string = format!("{{ \"command\": [\"set_property\", \"{}\", {}] }}\n",
-                             property,
-                             value.as_string());
+pub fn set_mpv_property<T: TypeHandler>(
+    instance: &Mpv,
+    property: &str,
+    value: T,
+) -> Result<(), Error> {
+    let ipc_string = format!(
+        "{{ \"command\": [\"set_property\", \"{}\", {}] }}\n",
+        property,
+        value.as_string()
+    );
     match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(_) => Ok(()),
         Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
@@ -255,9 +257,11 @@ pub fn run_mpv_command(instance: &Mpv, command: &str, args: &[&str]) -> Result<(
 }
 
 pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Result<(), Error> {
-    let ipc_string = format!("{{ \"command\": [\"observe_property\", {}, \"{}\"] }}\n",
-                             id,
-                             property);
+    let ipc_string = format!(
+        "{{ \"command\": [\"observe_property\", {}, \"{}\"] }}\n",
+        id,
+        property
+    );
     match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(feedback) => {
             if let Value::String(ref error) = feedback["error"] {
@@ -274,19 +278,10 @@ pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Resul
     }
 }
 
-/// #Description
-///
-/// Listens on socket <socket> for events and prints them in real-time to stdout.
-/// This function contains an infinite-loop which keeps the application open indefinitely.
-///
-/// #Example
-/// ```
-/// listen("/tmp/mpvsocket");
-/// ```
-pub fn listen(instance: &Mpv, tx: &Sender<Event>) -> Result<(), Error> {
+pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
     let mut response = String::new();
-    let mut reader = BufReader::new(&instance.0);
-    reader.read_line(&mut response).unwrap();
+    instance.reader.read_line(&mut response).unwrap();
+    response = response.trim_right().to_string();
     match serde_json::from_str::<Value>(&response) {
         Ok(e) => {
             if let Value::String(ref name) = e["event"] {
@@ -389,8 +384,8 @@ pub fn listen(instance: &Mpv, tx: &Sender<Event>) -> Result<(), Error> {
                                 data = MpvDataType::HashMap(json_map_to_hashmap(m));
                             }
 
-                            _ => {
-                                unimplemented!();
+                            Value::Null => {
+                                data = MpvDataType::Null;
                             }
                         }
 
@@ -400,24 +395,26 @@ pub fn listen(instance: &Mpv, tx: &Sender<Event>) -> Result<(), Error> {
                         event = Event::Unimplemented;
                     }
                 };
-                tx.send(event).unwrap();
+                return Ok(event);
             }
         }
         Err(why) => return Err(Error(ErrorCode::JsonParseError(why.to_string()))),
     }
-    Ok(())
+    unreachable!();
 }
 
-pub fn listen_raw(instance: &Mpv, tx: &Sender<String>) {
+pub fn listen_raw(instance: &mut Mpv) -> String {
     let mut response = String::new();
-    let mut reader = BufReader::new(&instance.0);
-    reader.read_line(&mut response).unwrap();
-    tx.send(response.clone()).unwrap();
-    response.clear();
+    instance.reader.read_line(&mut response).unwrap();
+    response.trim_right().to_string()
+    // let mut stream = &instance.0;
+    // let mut buffer = [0; 32];
+    // stream.read(&mut buffer[..]).unwrap();
+    // String::from_utf8_lossy(&buffer).into_owned()
 }
 
 fn send_command_sync(instance: &Mpv, command: &str) -> String {
-    let mut stream = &instance.0;
+    let mut stream = &instance.stream;
     match stream.write_all(command.as_bytes()) {
         Err(why) => panic!("Error: Could not write to socket: {}", why),
         Ok(_) => {
@@ -439,16 +436,20 @@ fn json_map_to_hashmap(map: &serde_json::map::Map<String, Value>) -> HashMap<Str
     for (ref key, ref value) in map.iter() {
         match **value {
             Value::Array(ref array) => {
-                output_map.insert(key.to_string(),
-                                  MpvDataType::Array(json_array_to_vec(array)));
+                output_map.insert(
+                    key.to_string(),
+                    MpvDataType::Array(json_array_to_vec(array)),
+                );
             }
             Value::Bool(ref b) => {
                 output_map.insert(key.to_string(), MpvDataType::Bool(*b));
             }
             Value::Number(ref n) => {
                 if n.is_u64() {
-                    output_map.insert(key.to_string(),
-                                      MpvDataType::Usize(n.as_u64().unwrap() as usize));
+                    output_map.insert(
+                        key.to_string(),
+                        MpvDataType::Usize(n.as_u64().unwrap() as usize),
+                    );
                 } else if n.is_f64() {
                     output_map.insert(key.to_string(), MpvDataType::Double(n.as_f64().unwrap()));
                 } else {
@@ -459,8 +460,10 @@ fn json_map_to_hashmap(map: &serde_json::map::Map<String, Value>) -> HashMap<Str
                 output_map.insert(key.to_string(), MpvDataType::String(s.to_string()));
             }
             Value::Object(ref m) => {
-                output_map.insert(key.to_string(),
-                                  MpvDataType::HashMap(json_map_to_hashmap(m)));
+                output_map.insert(
+                    key.to_string(),
+                    MpvDataType::HashMap(json_map_to_hashmap(m)),
+                );
             }
             Value::Null => {
                 unimplemented!();
@@ -544,11 +547,11 @@ fn json_array_to_playlist(array: &Vec<Value>) -> Vec<PlaylistEntry> {
             current = *b;
         }
         output.push(PlaylistEntry {
-                        id,
-                        filename,
-                        title,
-                        current,
-                    });
+            id,
+            filename,
+            title,
+            current,
+        });
     }
     output
 }
