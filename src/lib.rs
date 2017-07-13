@@ -153,9 +153,7 @@ impl Display for ErrorCode {
         match *self {
             ErrorCode::ConnectError(ref msg) => f.write_str(&format!("ConnectError: {}", msg)),
             ErrorCode::JsonParseError(ref msg) => f.write_str(&format!("JsonParseError: {}", msg)),
-            ErrorCode::MpvError(ref msg) => {
-                f.write_str(&format!("mpv returned an error value: {}", msg))
-            }
+            ErrorCode::MpvError(ref msg) => f.write_str(&format!("MpvError: {}", msg)),
             ErrorCode::JsonContainsUnexptectedType => {
                 f.write_str("Mpv sent a value with an unexpected type")
             }
