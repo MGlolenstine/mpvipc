@@ -325,10 +325,13 @@ impl Mpv {
     ///
     /// #Example
     /// ```
-    /// # use mpvipc::Mpv;
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
-    /// let paused: bool = mpv.get_property("pause").unwrap();
-    /// let title: String = mpv.get_property("media-title").unwrap();
+    /// # use mpvipc::{Mpv, Error};
+    /// # fn main() -> Result<(), Error> {
+    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    /// let paused: bool = mpv.get_property("pause")?;
+    /// let title: String = mpv.get_property("media-title")?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, Error> {
         T::get_property_generic(self, property)
@@ -346,9 +349,12 @@ impl Mpv {
     /// #Example
     ///
     /// ```
-    /// # use mpvipc::Mpv;
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
-    /// let title = mpv.get_property_string("media-title").unwrap();
+    /// # use mpvipc::{Mpv, Error};
+    /// # fn main() -> Result<(), Error> {
+    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    /// let title = mpv.get_property_string("media-title")?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_property_string(&self, property: &str) -> Result<String, Error> {
         get_mpv_property_string(self, property)
@@ -364,11 +370,10 @@ impl Mpv {
     ///
     /// #Example
     ///
-    /// ```
-    /// # use mpvipc::Mpv;
-    /// let mut mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
+    /// ```ignore
+    /// let mut mpv = Mpv::connect("/tmp/mpvsocket")?;
     /// loop {
-    ///     let event = mpv.event_listen().unwrap();
+    ///     let event = mpv.event_listen()?;
     ///     println!("{:?}", event);
     /// }
     /// ```
@@ -411,14 +416,17 @@ impl Mpv {
     ///
     /// #Example
     /// ```
-    /// # use mpvipc::Mpv;
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
+    /// # use mpvipc::{Mpv, Error};
+    /// # fn main() -> Result<(), Error> {
+    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
     ///
     /// //Run command 'playlist-shuffle' which takes no arguments
-    /// mpv.run_command("playlist-shuffle", &[]);
+    /// mpv.run_command("playlist-shuffle", &[])?;
     ///
     /// //Run command 'seek' which in this case takes two arguments
-    /// mpv.run_command("seek", &["0", "absolute"]);
+    /// mpv.run_command("seek", &["0", "absolute"])?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn run_command(&self, command: &str, args: &[&str]) -> Result<(), Error> {
         run_mpv_command(self, command, args)
@@ -592,9 +600,12 @@ impl Mpv {
     ///
     /// #Example
     /// ```
-    /// # use mpvipc::Mpv;
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
-    /// mpv.set_property("pause", true);
+    /// # use mpvipc::{Mpv, Error};
+    /// # fn main() -> Result<(), Error> {
+    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    /// mpv.set_property("pause", true)?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn set_property<T: SetPropertyTypeHandler<T>>(
         &self,
