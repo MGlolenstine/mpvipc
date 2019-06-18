@@ -1,4 +1,4 @@
-use log::debug;
+use log::{debug, warn};
 use serde_json::{self, Value};
 use std::collections::HashMap;
 use std::io::BufReader;
@@ -279,6 +279,40 @@ pub fn observe_mpv_property(instance: &Mpv, id: &isize, property: &str) -> Resul
     }
 }
 
+fn try_convert_property(name: &str, id: isize, data: MpvDataType) -> Event {
+    let property = match name {
+        "path" => match data {
+            MpvDataType::String(value) => Property::Path(Some(value)),
+            MpvDataType::Null => Property::Path(None),
+            _ => unimplemented!(),
+        },
+        "pause" => match data {
+            MpvDataType::Bool(value) => Property::Pause(value),
+            _ => unimplemented!(),
+        },
+        "playback-time" => match data {
+            MpvDataType::Double(value) => Property::PlaybackTime(Some(value)),
+            MpvDataType::Null => Property::PlaybackTime(None),
+            _ => unimplemented!(),
+        },
+        "duration" => match data {
+            MpvDataType::Double(value) => Property::Duration(Some(value)),
+            MpvDataType::Null => Property::Duration(None),
+            _ => unimplemented!(),
+        },
+        "metadata" => match data {
+            MpvDataType::HashMap(value) => Property::Metadata(Some(value)),
+            MpvDataType::Null => Property::Metadata(None),
+            _ => unimplemented!(),
+        },
+        _ => {
+            warn!("Property {} not implemented", name);
+            Property::Unknown { name: name.to_string(), id, data }
+        }
+    };
+    Event::PropertyChange(property)
+}
+
 pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
     let mut response = String::new();
     instance.reader.read_line(&mut response).unwrap();
@@ -391,7 +425,7 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
                             }
                         }
 
-                        event = Event::PropertyChange { name, id, data }
+                        event = try_convert_property(name.as_ref(), id, data);
                     }
                     _ => {
                         event = Event::Unimplemented;

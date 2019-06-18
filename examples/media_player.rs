@@ -4,6 +4,7 @@ use mpvipc::{
     Event,
     Mpv,
     MpvDataType,
+    Property,
 };
 use std::io::{self, Write};
 
@@ -31,57 +32,32 @@ fn main() -> Result<(), Error> {
     loop {
         let event = mpv.event_listen()?;
         match event {
-            Event::PropertyChange { name, id: _, data } => {
-                match name.as_ref() {
-                    "path" => {
-                        match data {
-                            MpvDataType::String(value) => println!("\nPlaying: {}[K", value),
-                            MpvDataType::Null => (),
-                            _ => panic!("Wrong data type for 'path' value: {:?}", data),
+            Event::PropertyChange(property) => {
+                match property {
+                    Property::Path(Some(value)) => println!("\nPlaying: {}[K", value),
+                    Property::Path(None) => (),
+                    Property::Pause(value) => pause = value,
+                    Property::PlaybackTime(Some(value)) => playback_time = value,
+                    Property::PlaybackTime(None) => playback_time = std::f64::NAN,
+                    Property::Duration(Some(value)) => duration = value,
+                    Property::Duration(None) => duration = std::f64::NAN,
+                    Property::Metadata(Some(value)) => {
+                        println!("File tags:[K");
+                        if let Some(MpvDataType::String(value)) = value.get("ARTIST") {
+                            println!(" Artist: {}[K", value);
+                        }
+                        if let Some(MpvDataType::String(value)) = value.get("ALBUM") {
+                            println!(" Album: {}[K", value);
+                        }
+                        if let Some(MpvDataType::String(value)) = value.get("TITLE") {
+                            println!(" Title: {}[K", value);
+                        }
+                        if let Some(MpvDataType::String(value)) = value.get("TRACK") {
+                            println!(" Track: {}[K", value);
                         }
                     },
-                    "pause" => {
-                        match data {
-                            MpvDataType::Bool(value) => pause = value,
-                            _ => panic!("Wrong data type for 'pause' value: {:?}", data),
-                        }
-                    },
-                    "playback-time" => {
-                        match data {
-                            MpvDataType::Double(value) => playback_time = value,
-                            MpvDataType::Null => (),
-                            _ => panic!("Wrong data type for 'playback-time' value: {:?}", data),
-                        }
-                    },
-                    "duration" => {
-                        match data {
-                            MpvDataType::Double(value) => duration = value,
-                            MpvDataType::Null => (),
-                            _ => panic!("Wrong data type for 'duration' value: {:?}", data),
-                        }
-                    },
-                    "metadata" => {
-                        match data {
-                            MpvDataType::HashMap(value) => {
-                                println!("File tags:");
-                                if let Some(MpvDataType::String(value)) = value.get("ARTIST") {
-                                    println!(" Artist: {}[K", value);
-                                }
-                                if let Some(MpvDataType::String(value)) = value.get("ALBUM") {
-                                    println!(" Album: {}[K", value);
-                                }
-                                if let Some(MpvDataType::String(value)) = value.get("TITLE") {
-                                    println!(" Title: {}[K", value);
-                                }
-                                if let Some(MpvDataType::String(value)) = value.get("TRACK") {
-                                    println!(" Track: {}[K", value);
-                                }
-                            },
-                            MpvDataType::Null => (),
-                            _ => panic!("Wrong data type for 'metadata' value: {:?}", data),
-                        }
-                    },
-                    _ => panic!("Wrong property changed: {}", name),
+                    Property::Metadata(None) => (),
+                    Property::Unknown { name: _, id: _, data: _ } => (),
                 }
             },
             Event::Shutdown => return Ok(()),

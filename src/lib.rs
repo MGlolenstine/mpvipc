@@ -36,13 +36,23 @@ pub enum Event {
     MetadataUpdate,
     Seek,
     PlaybackRestart,
-    PropertyChange {
+    PropertyChange(Property),
+    ChapterChange,
+    Unimplemented,
+}
+
+#[derive(Debug)]
+pub enum Property {
+    Path(Option<String>),
+    Pause(bool),
+    PlaybackTime(Option<f64>),
+    Duration(Option<f64>),
+    Metadata(Option<HashMap<String, MpvDataType>>),
+    Unknown {
         name: String,
         id: isize,
         data: MpvDataType,
     },
-    ChapterChange,
-    Unimplemented,
 }
 
 #[derive(Debug)]
