@@ -316,6 +316,7 @@ impl Mpv {
     ///
     /// #Example
     /// ```
+    /// # use mpvipc::Mpv;
     /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// let paused: bool = mpv.get_property("pause").unwrap();
     /// let title: String = mpv.get_property("media-title").unwrap();
@@ -336,6 +337,7 @@ impl Mpv {
     /// #Example
     ///
     /// ```
+    /// # use mpvipc::Mpv;
     /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// let title = mpv.get_property_string("media-title").unwrap();
     /// ```
@@ -354,7 +356,8 @@ impl Mpv {
     /// #Example
     ///
     /// ```
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
+    /// # use mpvipc::Mpv;
+    /// let mut mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// loop {
     ///     let event = mpv.event_listen().unwrap();
     ///     println!("{:?}", event);
@@ -399,6 +402,7 @@ impl Mpv {
     ///
     /// #Example
     /// ```
+    /// # use mpvipc::Mpv;
     /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     ///
     /// //Run command 'playlist-shuffle' which takes no arguments
@@ -579,6 +583,7 @@ impl Mpv {
     ///
     /// #Example
     /// ```
+    /// # use mpvipc::Mpv;
     /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
     /// mpv.set_property("pause", true);
     /// ```
