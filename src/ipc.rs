@@ -281,7 +281,7 @@ pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Resul
 pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
     let mut response = String::new();
     instance.reader.read_line(&mut response).unwrap();
-    response = response.trim_right().to_string();
+    response = response.trim_end().to_string();
     match serde_json::from_str::<Value>(&response) {
         Ok(e) => {
             if let Value::String(ref name) = e["event"] {
@@ -406,7 +406,7 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
 pub fn listen_raw(instance: &mut Mpv) -> String {
     let mut response = String::new();
     instance.reader.read_line(&mut response).unwrap();
-    response.trim_right().to_string()
+    response.trim_end().to_string()
     // let mut stream = &instance.0;
     // let mut buffer = [0; 32];
     // stream.read(&mut buffer[..]).unwrap();
