@@ -7,7 +7,7 @@ license = "GPL-3.0"
 homepage = "https://gitlab.com/mpv-ipc/mpvipc"
 repository = "https://gitlab.com/mpv-ipc/mpvipc"
 documentation = "https://docs.rs/mpvipc/"
-
+edition = "2018"
 
 [dependencies]
 serde = "1.0.1"
