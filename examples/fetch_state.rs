@@ -1,5 +1,5 @@
 use env_logger;
-use mpvipc::{Mpv, Error as MpvError};
+use mpvipc::{Error as MpvError, Mpv};
 
 fn main() -> Result<(), MpvError> {
     env_logger::init();

@@ -1,10 +1,10 @@
+use super::*;
 use log::{debug, warn};
 use serde_json::{self, Value};
 use std::collections::HashMap;
-use std::io::BufReader;
 use std::io::prelude::*;
+use std::io::BufReader;
 use std::iter::Iterator;
-use super::*;
 
 #[derive(Debug)]
 pub struct PlaylistEntry {
@@ -260,8 +260,7 @@ pub fn run_mpv_command(instance: &Mpv, command: &str, args: &[&str]) -> Result<(
 pub fn observe_mpv_property(instance: &Mpv, id: &isize, property: &str) -> Result<(), Error> {
     let ipc_string = format!(
         "{{ \"command\": [\"observe_property\", {}, \"{}\"] }}\n",
-        id,
-        property
+        id, property
     );
     match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(feedback) => {
@@ -307,7 +306,11 @@ fn try_convert_property(name: &str, id: isize, data: MpvDataType) -> Event {
         },
         _ => {
             warn!("Property {} not implemented", name);
-            Property::Unknown { name: name.to_string(), id, data }
+            Property::Unknown {
+                name: name.to_string(),
+                id,
+                data,
+            }
         }
     };
     Event::PropertyChange(property)
