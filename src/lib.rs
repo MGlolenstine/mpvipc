@@ -110,6 +110,7 @@ pub enum ErrorCode {
 pub struct Mpv {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
+    name: String,
 }
 #[derive(Debug)]
 pub struct Playlist(pub Vec<PlaylistEntry>);
@@ -122,6 +123,14 @@ impl Drop for Mpv {
     }
 }
 
+impl fmt::Debug for Mpv {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_tuple("Mpv")
+            .field(&self.name)
+            .finish()
+    }
+}
+
 impl Clone for Mpv {
     fn clone(&self) -> Self {
         let stream = self.stream.try_clone().expect("cloning UnixStream");
@@ -129,6 +138,7 @@ impl Clone for Mpv {
         Mpv {
             stream,
             reader: BufReader::new(cloned_stream),
+            name: self.name.clone(),
         }
     }
 
@@ -138,6 +148,7 @@ impl Clone for Mpv {
         *self = Mpv {
             stream,
             reader: BufReader::new(cloned_stream),
+            name: source.name.clone(),
         }
     }
 }
@@ -263,6 +274,7 @@ impl Mpv {
                 return Ok(Mpv {
                     stream,
                     reader: BufReader::new(cloned_stream),
+                    name: String::from(socket),
                 });
             }
             Err(internal_error) => Err(Error(ErrorCode::ConnectError(internal_error.to_string()))),
