@@ -256,7 +256,7 @@ pub fn run_mpv_command(instance: &Mpv, command: &str, args: &[&str]) -> Result<(
     }
 }
 
-pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Result<(), Error> {
+pub fn observe_mpv_property(instance: &Mpv, id: &isize, property: &str) -> Result<(), Error> {
     let ipc_string = format!(
         "{{ \"command\": [\"observe_property\", {}, \"{}\"] }}\n",
         id,
@@ -337,7 +337,7 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
                     }
                     "property-change" => {
                         let name: String;
-                        let id: usize;
+                        let id: isize;
                         let data: MpvDataType;
 
                         if let Value::String(ref n) = e["name"] {
@@ -347,9 +347,9 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
                         }
 
                         if let Value::Number(ref n) = e["id"] {
-                            id = n.as_u64().unwrap() as usize;
+                            id = n.as_i64().unwrap() as isize;
                         } else {
-                            return Err(Error(ErrorCode::JsonContainsUnexptectedType));
+                            id = 0;
                         }
 
                         match e["data"] {

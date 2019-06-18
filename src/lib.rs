@@ -38,7 +38,7 @@ pub enum Event {
     PlaybackRestart,
     PropertyChange {
         name: String,
-        id: usize,
+        id: isize,
         data: MpvDataType,
     },
     ChapterChange,
@@ -389,7 +389,7 @@ impl Mpv {
         run_mpv_command(self, "playlist-next", &[])
     }
 
-    pub fn observe_property(&self, id: &usize, property: &str) -> Result<(), Error> {
+    pub fn observe_property(&self, id: &isize, property: &str) -> Result<(), Error> {
         observe_mpv_property(self, id, property)
     }
 
