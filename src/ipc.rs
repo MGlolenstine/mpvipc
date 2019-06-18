@@ -1,3 +1,4 @@
+use log::debug;
 use serde_json::{self, Value};
 use std::collections::HashMap;
 use std::io::BufReader;
@@ -282,6 +283,7 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
     let mut response = String::new();
     instance.reader.read_line(&mut response).unwrap();
     response = response.trim_end().to_string();
+    debug!("Event: {}", response);
     match serde_json::from_str::<Value>(&response) {
         Ok(e) => {
             if let Value::String(ref name) = e["event"] {
@@ -418,6 +420,7 @@ fn send_command_sync(instance: &Mpv, command: &str) -> String {
     match stream.write_all(command.as_bytes()) {
         Err(why) => panic!("Error: Could not write to socket: {}", why),
         Ok(_) => {
+            debug!("Command: {}", command.trim_end());
             let mut response = String::new();
             {
                 let mut reader = BufReader::new(stream);
@@ -426,6 +429,7 @@ fn send_command_sync(instance: &Mpv, command: &str) -> String {
                     reader.read_line(&mut response).unwrap();
                 }
             }
+            debug!("Response: {}", response.trim_end());
             response
         }
     }
