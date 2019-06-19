@@ -1,9 +1,10 @@
+use super::*;
+use log::{debug, warn};
 use serde_json::{self, Value};
 use std::collections::HashMap;
-use std::io::BufReader;
 use std::io::prelude::*;
+use std::io::BufReader;
 use std::iter::Iterator;
-use super::*;
 
 #[derive(Debug)]
 pub struct PlaylistEntry {
@@ -256,11 +257,10 @@ pub fn run_mpv_command(instance: &Mpv, command: &str, args: &[&str]) -> Result<(
     }
 }
 
-pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Result<(), Error> {
+pub fn observe_mpv_property(instance: &Mpv, id: &isize, property: &str) -> Result<(), Error> {
     let ipc_string = format!(
         "{{ \"command\": [\"observe_property\", {}, \"{}\"] }}\n",
-        id,
-        property
+        id, property
     );
     match serde_json::from_str::<Value>(&send_command_sync(instance, &ipc_string)) {
         Ok(feedback) => {
@@ -278,10 +278,49 @@ pub fn observe_mpv_property(instance: &Mpv, id: &usize, property: &str) -> Resul
     }
 }
 
+fn try_convert_property(name: &str, id: isize, data: MpvDataType) -> Event {
+    let property = match name {
+        "path" => match data {
+            MpvDataType::String(value) => Property::Path(Some(value)),
+            MpvDataType::Null => Property::Path(None),
+            _ => unimplemented!(),
+        },
+        "pause" => match data {
+            MpvDataType::Bool(value) => Property::Pause(value),
+            _ => unimplemented!(),
+        },
+        "playback-time" => match data {
+            MpvDataType::Double(value) => Property::PlaybackTime(Some(value)),
+            MpvDataType::Null => Property::PlaybackTime(None),
+            _ => unimplemented!(),
+        },
+        "duration" => match data {
+            MpvDataType::Double(value) => Property::Duration(Some(value)),
+            MpvDataType::Null => Property::Duration(None),
+            _ => unimplemented!(),
+        },
+        "metadata" => match data {
+            MpvDataType::HashMap(value) => Property::Metadata(Some(value)),
+            MpvDataType::Null => Property::Metadata(None),
+            _ => unimplemented!(),
+        },
+        _ => {
+            warn!("Property {} not implemented", name);
+            Property::Unknown {
+                name: name.to_string(),
+                id,
+                data,
+            }
+        }
+    };
+    Event::PropertyChange(property)
+}
+
 pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
     let mut response = String::new();
     instance.reader.read_line(&mut response).unwrap();
-    response = response.trim_right().to_string();
+    response = response.trim_end().to_string();
+    debug!("Event: {}", response);
     match serde_json::from_str::<Value>(&response) {
         Ok(e) => {
             if let Value::String(ref name) = e["event"] {
@@ -337,7 +376,7 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
                     }
                     "property-change" => {
                         let name: String;
-                        let id: usize;
+                        let id: isize;
                         let data: MpvDataType;
 
                         if let Value::String(ref n) = e["name"] {
@@ -347,9 +386,9 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
                         }
 
                         if let Value::Number(ref n) = e["id"] {
-                            id = n.as_u64().unwrap() as usize;
+                            id = n.as_i64().unwrap() as isize;
                         } else {
-                            return Err(Error(ErrorCode::JsonContainsUnexptectedType));
+                            id = 0;
                         }
 
                         match e["data"] {
@@ -389,7 +428,7 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
                             }
                         }
 
-                        event = Event::PropertyChange { name, id, data }
+                        event = try_convert_property(name.as_ref(), id, data);
                     }
                     _ => {
                         event = Event::Unimplemented;
@@ -406,7 +445,7 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
 pub fn listen_raw(instance: &mut Mpv) -> String {
     let mut response = String::new();
     instance.reader.read_line(&mut response).unwrap();
-    response.trim_right().to_string()
+    response.trim_end().to_string()
     // let mut stream = &instance.0;
     // let mut buffer = [0; 32];
     // stream.read(&mut buffer[..]).unwrap();
@@ -418,6 +457,7 @@ fn send_command_sync(instance: &Mpv, command: &str) -> String {
     match stream.write_all(command.as_bytes()) {
         Err(why) => panic!("Error: Could not write to socket: {}", why),
         Ok(_) => {
+            debug!("Command: {}", command.trim_end());
             let mut response = String::new();
             {
                 let mut reader = BufReader::new(stream);
@@ -426,6 +466,7 @@ fn send_command_sync(instance: &Mpv, command: &str) -> String {
                     reader.read_line(&mut response).unwrap();
                 }
             }
+            debug!("Response: {}", response.trim_end());
             response
         }
     }

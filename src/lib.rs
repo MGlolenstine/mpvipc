@@ -1,13 +1,10 @@
-extern crate serde;
-extern crate serde_json;
-
 pub mod ipc;
 
 use ipc::*;
 use std::collections::HashMap;
 use std::fmt::{self, Display};
+use std::io::{BufReader, Read};
 use std::os::unix::net::UnixStream;
-use std::io::{Read, BufReader};
 
 #[derive(Debug)]
 pub enum Event {
@@ -39,13 +36,23 @@ pub enum Event {
     MetadataUpdate,
     Seek,
     PlaybackRestart,
-    PropertyChange {
-        name: String,
-        id: usize,
-        data: MpvDataType,
-    },
+    PropertyChange(Property),
     ChapterChange,
     Unimplemented,
+}
+
+#[derive(Debug)]
+pub enum Property {
+    Path(Option<String>),
+    Pause(bool),
+    PlaybackTime(Option<f64>),
+    Duration(Option<f64>),
+    Metadata(Option<HashMap<String, MpvDataType>>),
+    Unknown {
+        name: String,
+        id: isize,
+        data: MpvDataType,
+    },
 }
 
 #[derive(Debug)]
@@ -110,6 +117,7 @@ pub enum ErrorCode {
 pub struct Mpv {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
+    name: String,
 }
 #[derive(Debug)]
 pub struct Playlist(pub Vec<PlaylistEntry>);
@@ -122,6 +130,12 @@ impl Drop for Mpv {
     }
 }
 
+impl fmt::Debug for Mpv {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_tuple("Mpv").field(&self.name).finish()
+    }
+}
+
 impl Clone for Mpv {
     fn clone(&self) -> Self {
         let stream = self.stream.try_clone().expect("cloning UnixStream");
@@ -129,6 +143,7 @@ impl Clone for Mpv {
         Mpv {
             stream,
             reader: BufReader::new(cloned_stream),
+            name: self.name.clone(),
         }
     }
 
@@ -138,6 +153,7 @@ impl Clone for Mpv {
         *self = Mpv {
             stream,
             reader: BufReader::new(cloned_stream),
+            name: source.name.clone(),
         }
     }
 }
@@ -167,9 +183,7 @@ impl Display for ErrorCode {
                 f.write_str("The received value is not of type \'std::f64\'")
             }
             ErrorCode::ValueDoesNotContainHashMap => {
-                f.write_str(
-                    "The received value is not of type \'std::collections::HashMap\'",
-                )
+                f.write_str("The received value is not of type \'std::collections::HashMap\'")
             }
             ErrorCode::ValueDoesNotContainPlaylist => {
                 f.write_str("The received value is not of type \'mpvipc::Playlist\'")
@@ -263,6 +277,7 @@ impl Mpv {
                 return Ok(Mpv {
                     stream,
                     reader: BufReader::new(cloned_stream),
+                    name: String::from(socket),
                 });
             }
             Err(internal_error) => Err(Error(ErrorCode::ConnectError(internal_error.to_string()))),
@@ -271,9 +286,9 @@ impl Mpv {
 
     pub fn disconnect(&self) {
         let mut stream = &self.stream;
-        stream.shutdown(std::net::Shutdown::Both).expect(
-            "socket disconnect",
-        );
+        stream
+            .shutdown(std::net::Shutdown::Both)
+            .expect("socket disconnect");
         let mut buffer = [0; 32];
         for _ in 0..stream.bytes().count() {
             stream.read(&mut buffer[..]).unwrap();
@@ -316,9 +331,13 @@ impl Mpv {
     ///
     /// #Example
     /// ```
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
-    /// let paused: bool = mpv.get_property("pause").unwrap();
-    /// let title: String = mpv.get_property("media-title").unwrap();
+    /// # use mpvipc::{Mpv, Error};
+    /// # fn main() -> Result<(), Error> {
+    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    /// let paused: bool = mpv.get_property("pause")?;
+    /// let title: String = mpv.get_property("media-title")?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, Error> {
         T::get_property_generic(self, property)
@@ -336,8 +355,12 @@ impl Mpv {
     /// #Example
     ///
     /// ```
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
-    /// let title = mpv.get_property_string("media-title").unwrap();
+    /// # use mpvipc::{Mpv, Error};
+    /// # fn main() -> Result<(), Error> {
+    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    /// let title = mpv.get_property_string("media-title")?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_property_string(&self, property: &str) -> Result<String, Error> {
         get_mpv_property_string(self, property)
@@ -353,10 +376,10 @@ impl Mpv {
     ///
     /// #Example
     ///
-    /// ```
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
+    /// ```ignore
+    /// let mut mpv = Mpv::connect("/tmp/mpvsocket")?;
     /// loop {
-    ///     let event = mpv.event_listen().unwrap();
+    ///     let event = mpv.event_listen()?;
     ///     println!("{:?}", event);
     /// }
     /// ```
@@ -372,7 +395,7 @@ impl Mpv {
         run_mpv_command(self, "playlist-next", &[])
     }
 
-    pub fn observe_property(&self, id: &usize, property: &str) -> Result<(), Error> {
+    pub fn observe_property(&self, id: &isize, property: &str) -> Result<(), Error> {
         observe_mpv_property(self, id, property)
     }
 
@@ -399,13 +422,17 @@ impl Mpv {
     ///
     /// #Example
     /// ```
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
+    /// # use mpvipc::{Mpv, Error};
+    /// # fn main() -> Result<(), Error> {
+    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
     ///
     /// //Run command 'playlist-shuffle' which takes no arguments
-    /// mpv.run_command("playlist-shuffle", &[]);
+    /// mpv.run_command("playlist-shuffle", &[])?;
     ///
     /// //Run command 'seek' which in this case takes two arguments
-    /// mpv.run_command("seek", &["0", "absolute"]);
+    /// mpv.run_command("seek", &["0", "absolute"])?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn run_command(&self, command: &str, args: &[&str]) -> Result<(), Error> {
         run_mpv_command(self, command, args)
@@ -418,33 +445,25 @@ impl Mpv {
         option: PlaylistAddOptions,
     ) -> Result<(), Error> {
         match file_type {
-            PlaylistAddTypeOptions::File => {
-                match option {
-                    PlaylistAddOptions::Replace => {
-                        run_mpv_command(self, "loadfile", &[file, "replace"])
-                    }
-                    PlaylistAddOptions::Append => {
-                        run_mpv_command(self, "loadfile", &[file, "append"])
-                    }
-                    PlaylistAddOptions::AppendPlay => {
-                        run_mpv_command(self, "loadfile", &[file, "append-play"])
-                    }
+            PlaylistAddTypeOptions::File => match option {
+                PlaylistAddOptions::Replace => {
+                    run_mpv_command(self, "loadfile", &[file, "replace"])
                 }
-            }
+                PlaylistAddOptions::Append => run_mpv_command(self, "loadfile", &[file, "append"]),
+                PlaylistAddOptions::AppendPlay => {
+                    run_mpv_command(self, "loadfile", &[file, "append-play"])
+                }
+            },
 
-            PlaylistAddTypeOptions::Playlist => {
-                match option {
-                    PlaylistAddOptions::Replace => {
-                        run_mpv_command(self, "loadlist", &[file, "replace"])
-                    }
-                    PlaylistAddOptions::Append |
-                    PlaylistAddOptions::AppendPlay => {
-                        run_mpv_command(self, "loadlist", &[file, "append"])
-                    }
+            PlaylistAddTypeOptions::Playlist => match option {
+                PlaylistAddOptions::Replace => {
+                    run_mpv_command(self, "loadlist", &[file, "replace"])
                 }
-            }
+                PlaylistAddOptions::Append | PlaylistAddOptions::AppendPlay => {
+                    run_mpv_command(self, "loadlist", &[file, "append"])
+                }
+            },
         }
-
     }
 
     pub fn playlist_clear(&self) -> Result<(), Error> {
@@ -461,13 +480,11 @@ impl Mpv {
 
     pub fn playlist_play_next(&self, id: usize) -> Result<(), Error> {
         match get_mpv_property::<usize>(self, "playlist-pos") {
-            Ok(current_id) => {
-                run_mpv_command(
-                    self,
-                    "playlist-move",
-                    &[&id.to_string(), &(current_id + 1).to_string()],
-                )
-            }
+            Ok(current_id) => run_mpv_command(
+                self,
+                "playlist-move",
+                &[&id.to_string(), &(current_id + 1).to_string()],
+            ),
             Err(msg) => Err(msg),
         }
     }
@@ -502,21 +519,17 @@ impl Mpv {
         match option {
             Switch::On => enabled = true,
             Switch::Off => {}
-            Switch::Toggle => {
-                match get_mpv_property_string(self, "loop-file") {
-                    Ok(value) => {
-                        match value.as_ref() {
-                            "false" => {
-                                enabled = true;
-                            }
-                            _ => {
-                                enabled = false;
-                            }
-                        }
+            Switch::Toggle => match get_mpv_property_string(self, "loop-file") {
+                Ok(value) => match value.as_ref() {
+                    "false" => {
+                        enabled = true;
                     }
-                    Err(msg) => return Err(msg),
-                }
-            }
+                    _ => {
+                        enabled = false;
+                    }
+                },
+                Err(msg) => return Err(msg),
+            },
         }
         set_mpv_property(self, "loop-file", enabled)
     }
@@ -526,21 +539,17 @@ impl Mpv {
         match option {
             Switch::On => enabled = true,
             Switch::Off => {}
-            Switch::Toggle => {
-                match get_mpv_property_string(self, "loop-playlist") {
-                    Ok(value) => {
-                        match value.as_ref() {
-                            "false" => {
-                                enabled = true;
-                            }
-                            _ => {
-                                enabled = false;
-                            }
-                        }
+            Switch::Toggle => match get_mpv_property_string(self, "loop-playlist") {
+                Ok(value) => match value.as_ref() {
+                    "false" => {
+                        enabled = true;
                     }
-                    Err(msg) => return Err(msg),
-                }
-            }
+                    _ => {
+                        enabled = false;
+                    }
+                },
+                Err(msg) => return Err(msg),
+            },
         }
         set_mpv_property(self, "loop-playlist", enabled)
     }
@@ -550,14 +559,12 @@ impl Mpv {
         match option {
             Switch::On => enabled = true,
             Switch::Off => {}
-            Switch::Toggle => {
-                match get_mpv_property::<bool>(self, "mute") {
-                    Ok(value) => {
-                        enabled = !value;
-                    }
-                    Err(msg) => return Err(msg),
+            Switch::Toggle => match get_mpv_property::<bool>(self, "mute") {
+                Ok(value) => {
+                    enabled = !value;
                 }
-            }
+                Err(msg) => return Err(msg),
+            },
         }
         set_mpv_property(self, "mute", enabled)
     }
@@ -579,8 +586,12 @@ impl Mpv {
     ///
     /// #Example
     /// ```
-    /// let mpv = Mpv::connect("/tmp/mpvsocket").unwrap();
-    /// mpv.set_property("pause", true);
+    /// # use mpvipc::{Mpv, Error};
+    /// # fn main() -> Result<(), Error> {
+    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    /// mpv.set_property("pause", true)?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn set_property<T: SetPropertyTypeHandler<T>>(
         &self,
@@ -592,38 +603,34 @@ impl Mpv {
 
     pub fn set_speed(&self, input_speed: f64, option: NumberChangeOptions) -> Result<(), Error> {
         match get_mpv_property::<f64>(self, "speed") {
-            Ok(speed) => {
-                match option {
-                    NumberChangeOptions::Increase => {
-                        set_mpv_property(self, "speed", speed + input_speed)
-                    }
-
-                    NumberChangeOptions::Decrease => {
-                        set_mpv_property(self, "speed", speed - input_speed)
-                    }
-
-                    NumberChangeOptions::Absolute => set_mpv_property(self, "speed", input_speed),
+            Ok(speed) => match option {
+                NumberChangeOptions::Increase => {
+                    set_mpv_property(self, "speed", speed + input_speed)
                 }
-            }
+
+                NumberChangeOptions::Decrease => {
+                    set_mpv_property(self, "speed", speed - input_speed)
+                }
+
+                NumberChangeOptions::Absolute => set_mpv_property(self, "speed", input_speed),
+            },
             Err(msg) => Err(msg),
         }
     }
 
     pub fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), Error> {
         match get_mpv_property::<f64>(self, "volume") {
-            Ok(volume) => {
-                match option {
-                    NumberChangeOptions::Increase => {
-                        set_mpv_property(self, "volume", volume + input_volume)
-                    }
-
-                    NumberChangeOptions::Decrease => {
-                        set_mpv_property(self, "volume", volume - input_volume)
-                    }
-
-                    NumberChangeOptions::Absolute => set_mpv_property(self, "volume", input_volume),
+            Ok(volume) => match option {
+                NumberChangeOptions::Increase => {
+                    set_mpv_property(self, "volume", volume + input_volume)
                 }
-            }
+
+                NumberChangeOptions::Decrease => {
+                    set_mpv_property(self, "volume", volume - input_volume)
+                }
+
+                NumberChangeOptions::Absolute => set_mpv_property(self, "volume", input_volume),
+            },
             Err(msg) => Err(msg),
         }
     }
