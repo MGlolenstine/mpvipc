@@ -308,12 +308,11 @@ fn try_convert_property(name: &str, id: isize, data: MpvDataType) -> Event {
             warn!("Property {} not implemented", name);
             Property::Unknown {
                 name: name.to_string(),
-                id,
                 data,
             }
         }
     };
-    Event::PropertyChange(property)
+    Event::PropertyChange(id, property)
 }
 
 pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {

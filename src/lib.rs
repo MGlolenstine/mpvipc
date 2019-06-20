@@ -36,7 +36,7 @@ pub enum Event {
     MetadataUpdate,
     Seek,
     PlaybackRestart,
-    PropertyChange(Property),
+    PropertyChange(isize, Property),
     ChapterChange,
     Unimplemented,
 }
@@ -50,7 +50,6 @@ pub enum Property {
     Metadata(Option<HashMap<String, MpvDataType>>),
     Unknown {
         name: String,
-        id: isize,
         data: MpvDataType,
     },
 }
