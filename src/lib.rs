@@ -9,19 +9,6 @@ use std::os::unix::net::UnixStream;
 #[derive(Debug)]
 pub enum Event {
     Shutdown,
-    // LogMessage {
-    //     prefix: &'static str,
-    //     level: &'static str,
-    //     text: &'static str,
-    //     log_level: LogLevel,
-    // },
-    // GetPropertyReply {
-    //     name: &'static str,
-    //     result: Result<Format<'a>>,
-    //     reply_userdata: u32,
-    // },
-    // SetPropertyReply(Result<()>, u32),
-    // CommandReply(Result<()>, u32),
     StartFile,
     EndFile,
     FileLoaded,
@@ -36,7 +23,7 @@ pub enum Event {
     MetadataUpdate,
     Seek,
     PlaybackRestart,
-    PropertyChange(isize, Property),
+    PropertyChange { id: isize, property: Property },
     ChapterChange,
     Unimplemented,
 }
@@ -48,10 +35,33 @@ pub enum Property {
     PlaybackTime(Option<f64>),
     Duration(Option<f64>),
     Metadata(Option<HashMap<String, MpvDataType>>),
-    Unknown {
-        name: String,
-        data: MpvDataType,
+    Unknown { name: String, data: MpvDataType },
+}
+
+pub enum MpvCommand {
+    LoadFile {
+        file: String,
+        option: PlaylistAddOptions,
     },
+    LoadList {
+        file: String,
+        option: PlaylistAddOptions,
+    },
+    PlaylistClear,
+    PlaylistMove {
+        from: usize,
+        to: usize,
+    },
+    PlaylistNext,
+    PlaylistPrev,
+    PlaylistRemove(usize),
+    PlaylistShuffle,
+    Quit,
+    Seek {
+        seconds: f64,
+        option: SeekOptions,
+    },
+    Stop,
 }
 
 #[derive(Debug)]
@@ -75,7 +85,6 @@ pub enum NumberChangeOptions {
 pub enum PlaylistAddOptions {
     Replace,
     Append,
-    AppendPlay,
 }
 
 pub enum PlaylistAddTypeOptions {
@@ -312,11 +321,11 @@ impl Mpv {
         }
     }
 
-    /// #Description
+    /// # Description
     ///
     /// Retrieves the property value from mpv.
     ///
-    /// ##Supported types
+    /// ## Supported types
     /// - String
     /// - bool
     /// - HashMap<String, String> (e.g. for the 'metadata' property)
@@ -324,56 +333,56 @@ impl Mpv {
     /// - usize
     /// - f64
     ///
-    /// ##Input arguments
+    /// ## Input arguments
     ///
     /// - **property** defines the mpv property that should be retrieved
     ///
-    /// #Example
+    /// # Example
     /// ```
-    /// # use mpvipc::{Mpv, Error};
-    /// # fn main() -> Result<(), Error> {
-    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
-    /// let paused: bool = mpv.get_property("pause")?;
-    /// let title: String = mpv.get_property("media-title")?;
-    /// # Ok(())
-    /// # }
+    /// use mpvipc::{Mpv, Error};
+    /// fn main() -> Result<(), Error> {
+    ///     let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    ///     let paused: bool = mpv.get_property("pause")?;
+    ///     let title: String = mpv.get_property("media-title")?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, Error> {
         T::get_property_generic(self, property)
     }
 
-    /// #Description
+    /// # Description
     ///
     /// Retrieves the property value from mpv.
     /// The result is always of type String, regardless of the type of the value of the mpv property
     ///
-    /// ##Input arguments
+    /// ## Input arguments
     ///
     /// - **property** defines the mpv property that should be retrieved
     ///
-    /// #Example
+    /// # Example
     ///
     /// ```
-    /// # use mpvipc::{Mpv, Error};
-    /// # fn main() -> Result<(), Error> {
-    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
-    /// let title = mpv.get_property_string("media-title")?;
-    /// # Ok(())
-    /// # }
+    /// use mpvipc::{Mpv, Error};
+    /// fn main() -> Result<(), Error> {
+    ///     let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    ///     let title = mpv.get_property_string("media-title")?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn get_property_string(&self, property: &str) -> Result<String, Error> {
         get_mpv_property_string(self, property)
     }
 
     pub fn kill(&self) -> Result<(), Error> {
-        run_mpv_command(self, "quit", &[])
+        self.run_command(MpvCommand::Quit)
     }
 
-    /// #Description
+    /// # Description
     ///
     /// Waits until an mpv event occurs and returns the Event.
     ///
-    /// #Example
+    /// # Example
     ///
     /// ```ignore
     /// let mut mpv = Mpv::connect("/tmp/mpvsocket")?;
@@ -391,7 +400,7 @@ impl Mpv {
     }
 
     pub fn next(&self) -> Result<(), Error> {
-        run_mpv_command(self, "playlist-next", &[])
+        self.run_command(MpvCommand::PlaylistNext)
     }
 
     pub fn observe_property(&self, id: &isize, property: &str) -> Result<(), Error> {
@@ -403,38 +412,92 @@ impl Mpv {
     }
 
     pub fn prev(&self) -> Result<(), Error> {
-        run_mpv_command(self, "playlist-prev", &[])
+        self.run_command(MpvCommand::PlaylistPrev)
     }
 
     pub fn restart(&self) -> Result<(), Error> {
-        run_mpv_command(self, "seek", &["0", "absolute"])
+        self.run_command(MpvCommand::Seek {
+            seconds: 0f64,
+            option: SeekOptions::Absolute,
+        })
     }
 
-    /// #Description
+    /// # Description
     ///
     /// Runs mpv commands. The arguments are passed as a String-Vector reference:
     ///
-    /// ##Input arguments
+    /// ## Input arguments
     ///
     /// - **command**   defines the mpv command that should be executed
     /// - **args**      a slice of &str's which define the arguments
     ///
-    /// #Example
+    /// # Example
     /// ```
-    /// # use mpvipc::{Mpv, Error};
-    /// # fn main() -> Result<(), Error> {
-    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    /// use mpvipc::{Mpv, Error};
+    /// fn main() -> Result<(), Error> {
+    ///     let mpv = Mpv::connect("/tmp/mpvsocket")?;
     ///
-    /// //Run command 'playlist-shuffle' which takes no arguments
-    /// mpv.run_command("playlist-shuffle", &[])?;
+    ///     //Run command 'playlist-shuffle' which takes no arguments
+    ///     mpv.run_command(MpvCommand::PlaylistShuffle)?;
     ///
-    /// //Run command 'seek' which in this case takes two arguments
-    /// mpv.run_command("seek", &["0", "absolute"])?;
-    /// # Ok(())
-    /// # }
+    ///     //Run command 'seek' which in this case takes two arguments
+    ///     mpv.run_command(MpvCommand::Seek {
+    ///         seconds: 0f64,
+    ///         option: SeekOptions::Absolute,
+    ///     })?;
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn run_command(&self, command: &str, args: &[&str]) -> Result<(), Error> {
-        run_mpv_command(self, command, args)
+    pub fn run_command(&self, command: MpvCommand) -> Result<(), Error> {
+        match command {
+            MpvCommand::LoadFile { file, option } => run_mpv_command(
+                self,
+                "loadfile",
+                &[
+                    file.as_ref(),
+                    match option {
+                        PlaylistAddOptions::Append => "append",
+                        PlaylistAddOptions::Replace => "replace",
+                    },
+                ],
+            ),
+            MpvCommand::LoadList { file, option } => run_mpv_command(
+                self,
+                "loadlist",
+                &[
+                    file.as_ref(),
+                    match option {
+                        PlaylistAddOptions::Append => "append",
+                        PlaylistAddOptions::Replace => "replace",
+                    },
+                ],
+            ),
+            MpvCommand::PlaylistClear => run_mpv_command(self, "playlist-clear", &[]),
+            MpvCommand::PlaylistMove { from, to } => {
+                run_mpv_command(self, "playlist-move", &[&from.to_string(), &to.to_string()])
+            }
+            MpvCommand::PlaylistNext => run_mpv_command(self, "playlist-next", &[]),
+            MpvCommand::PlaylistPrev => run_mpv_command(self, "playlist-prev", &[]),
+            MpvCommand::PlaylistRemove(id) => {
+                run_mpv_command(self, "playlist-remove", &[&id.to_string()])
+            }
+            MpvCommand::PlaylistShuffle => run_mpv_command(self, "playlist-shuffle", &[]),
+            MpvCommand::Quit => run_mpv_command(self, "quit", &[]),
+            MpvCommand::Seek { seconds, option } => run_mpv_command(
+                self,
+                "seek",
+                &[
+                    &seconds.to_string(),
+                    match option {
+                        SeekOptions::Absolute => "absolute",
+                        SeekOptions::Relative => "relative",
+                        SeekOptions::AbsolutePercent => "absolute-percent",
+                        SeekOptions::RelativePercent => "relative-percent",
+                    },
+                ],
+            ),
+            MpvCommand::Stop => run_mpv_command(self, "stop", &[]),
+        }
     }
 
     pub fn playlist_add(
@@ -444,33 +507,24 @@ impl Mpv {
         option: PlaylistAddOptions,
     ) -> Result<(), Error> {
         match file_type {
-            PlaylistAddTypeOptions::File => match option {
-                PlaylistAddOptions::Replace => {
-                    run_mpv_command(self, "loadfile", &[file, "replace"])
-                }
-                PlaylistAddOptions::Append => run_mpv_command(self, "loadfile", &[file, "append"]),
-                PlaylistAddOptions::AppendPlay => {
-                    run_mpv_command(self, "loadfile", &[file, "append-play"])
-                }
-            },
+            PlaylistAddTypeOptions::File => self.run_command(MpvCommand::LoadFile {
+                file: file.to_string(),
+                option,
+            }),
 
-            PlaylistAddTypeOptions::Playlist => match option {
-                PlaylistAddOptions::Replace => {
-                    run_mpv_command(self, "loadlist", &[file, "replace"])
-                }
-                PlaylistAddOptions::Append | PlaylistAddOptions::AppendPlay => {
-                    run_mpv_command(self, "loadlist", &[file, "append"])
-                }
-            },
+            PlaylistAddTypeOptions::Playlist => self.run_command(MpvCommand::LoadList {
+                file: file.to_string(),
+                option,
+            }),
         }
     }
 
     pub fn playlist_clear(&self) -> Result<(), Error> {
-        run_mpv_command(self, "playlist-clear", &[])
+        self.run_command(MpvCommand::PlaylistClear)
     }
 
     pub fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), Error> {
-        run_mpv_command(self, "playlist-move", &[&from.to_string(), &to.to_string()])
+        self.run_command(MpvCommand::PlaylistMove { from, to })
     }
 
     pub fn playlist_play_id(&self, id: usize) -> Result<(), Error> {
@@ -479,38 +533,24 @@ impl Mpv {
 
     pub fn playlist_play_next(&self, id: usize) -> Result<(), Error> {
         match get_mpv_property::<usize>(self, "playlist-pos") {
-            Ok(current_id) => run_mpv_command(
-                self,
-                "playlist-move",
-                &[&id.to_string(), &(current_id + 1).to_string()],
-            ),
+            Ok(current_id) => self.run_command(MpvCommand::PlaylistMove {
+                from: id,
+                to: current_id + 1,
+            }),
             Err(msg) => Err(msg),
         }
     }
 
     pub fn playlist_remove_id(&self, id: usize) -> Result<(), Error> {
-        run_mpv_command(self, "playlist-remove", &[&id.to_string()])
+        self.run_command(MpvCommand::PlaylistRemove(id))
     }
 
     pub fn playlist_shuffle(&self) -> Result<(), Error> {
-        run_mpv_command(self, "playlist-shuffle", &[])
+        self.run_command(MpvCommand::PlaylistShuffle)
     }
 
     pub fn seek(&self, seconds: f64, option: SeekOptions) -> Result<(), Error> {
-        match option {
-            SeekOptions::Absolute => {
-                run_mpv_command(self, "seek", &[&seconds.to_string(), "absolute"])
-            }
-            SeekOptions::AbsolutePercent => {
-                run_mpv_command(self, "seek", &[&seconds.to_string(), "absolute-percent"])
-            }
-            SeekOptions::Relative => {
-                run_mpv_command(self, "seek", &[&seconds.to_string(), "relative"])
-            }
-            SeekOptions::RelativePercent => {
-                run_mpv_command(self, "seek", &[&seconds.to_string(), "relative-percent"])
-            }
-        }
+        self.run_command(MpvCommand::Seek { seconds, option })
     }
 
     pub fn set_loop_file(&self, option: Switch) -> Result<(), Error> {
@@ -568,29 +608,29 @@ impl Mpv {
         set_mpv_property(self, "mute", enabled)
     }
 
-    /// #Description
+    /// # Description
     ///
     /// Sets the mpv property _<property>_ to _<value>_.
     ///
-    /// ##Supported types
+    /// ## Supported types
     /// - String
     /// - bool
     /// - f64
     /// - usize
     ///
-    /// ##Input arguments
+    /// ## Input arguments
     ///
     /// - **property** defines the mpv property that should be retrieved
     /// - **value** defines the value of the given mpv property _<property>_
     ///
-    /// #Example
+    /// # Example
     /// ```
-    /// # use mpvipc::{Mpv, Error};
-    /// # fn main() -> Result<(), Error> {
-    /// let mpv = Mpv::connect("/tmp/mpvsocket")?;
-    /// mpv.set_property("pause", true)?;
-    /// # Ok(())
-    /// # }
+    /// use mpvipc::{Mpv, Error};
+    /// fn main() -> Result<(), Error> {
+    ///     let mpv = Mpv::connect("/tmp/mpvsocket")?;
+    ///     mpv.set_property("pause", true)?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn set_property<T: SetPropertyTypeHandler<T>>(
         &self,
@@ -635,7 +675,7 @@ impl Mpv {
     }
 
     pub fn stop(&self) -> Result<(), Error> {
-        run_mpv_command(self, "stop", &[])
+        self.run_command(MpvCommand::Stop)
     }
 
     pub fn toggle(&self) -> Result<(), Error> {

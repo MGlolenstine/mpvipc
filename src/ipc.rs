@@ -312,7 +312,7 @@ fn try_convert_property(name: &str, id: isize, data: MpvDataType) -> Event {
             }
         }
     };
-    Event::PropertyChange(id, property)
+    Event::PropertyChange { id, property }
 }
 
 pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {

@@ -26,7 +26,7 @@ fn main() -> Result<(), Error> {
     loop {
         let event = mpv.event_listen()?;
         match event {
-            Event::PropertyChange(_, property) => match property {
+            Event::PropertyChange { id: _, property } => match property {
                 Property::Path(Some(value)) => println!("\nPlaying: {}[K", value),
                 Property::Path(None) => (),
                 Property::Pause(value) => pause = value,
@@ -50,10 +50,7 @@ fn main() -> Result<(), Error> {
                     }
                 }
                 Property::Metadata(None) => (),
-                Property::Unknown {
-                    name: _,
-                    data: _,
-                } => (),
+                Property::Unknown { name: _, data: _ } => (),
             },
             Event::Shutdown => return Ok(()),
             Event::Unimplemented => panic!("Unimplemented event"),
