@@ -172,6 +172,8 @@ impl Display for Error {
     }
 }
 
+impl std::error::Error for Error {}
+
 impl Display for ErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
