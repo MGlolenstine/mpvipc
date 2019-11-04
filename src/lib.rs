@@ -172,6 +172,8 @@ impl Display for Error {
     }
 }
 
+impl std::error::Error for Error {}
+
 impl Display for ErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -498,6 +500,13 @@ impl Mpv {
             ),
             MpvCommand::Stop => run_mpv_command(self, "stop", &[]),
         }
+    }
+
+    /// Run a custom command.
+    /// This should only be used if the desired command is not implemented
+    /// with [MpvCommand].
+    pub fn run_command_raw(&self, command: &str, args: &[&str]) -> Result<(), Error> {
+        run_mpv_command(self, command, args)
     }
 
     pub fn playlist_add(
