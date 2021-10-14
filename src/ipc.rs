@@ -316,10 +316,17 @@ fn try_convert_property(name: &str, id: isize, data: MpvDataType) -> Event {
 }
 
 pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
+    if !instance.reader.fill_buf().map_err(|_|Error(ErrorCode::ConnectError(format!("Failed to fill the buffer!"))))?[..9].eq(b"{\"event\":"){
+        return Ok(Event::Unimplemented);
+    }
     let mut response = String::new();
     instance.reader.read_line(&mut response).unwrap();
     response = response.trim_end().to_string();
     debug!("Event: {}", response);
+    handle_packet(&response)
+}
+
+pub fn handle_packet(response: &str) -> Result<Event, Error> {
     match serde_json::from_str::<Value>(&response) {
         Ok(e) => {
             if let Value::String(ref name) = e["event"] {
@@ -438,7 +445,7 @@ pub fn listen(instance: &mut Mpv) -> Result<Event, Error> {
         }
         Err(why) => return Err(Error(ErrorCode::JsonParseError(why.to_string()))),
     }
-    unreachable!();
+    Ok(Event::Unimplemented)
 }
 
 pub fn listen_raw(instance: &mut Mpv) -> String {
