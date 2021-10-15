@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io::prelude::*;
 use std::iter::Iterator;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaylistEntry {
     pub id: usize,
     pub filename: String,
@@ -179,39 +179,32 @@ impl TypeHandler for Vec<PlaylistEntry> {
 
 pub async fn get_mpv_property<T: TypeHandler>(instance: &Mpv, property: &str) -> Result<T, Error> {
     let ipc_string = format!("{{ \"command\": [\"get_property\",\"{}\"] }}\n", property);
-
-    match serde_json::from_str::<Value>(&send_command_async(instance, &ipc_string).await) {
-        Ok(val) => T::get_value(val),
-        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
-    }
+    let data = send_command_async(instance, &ipc_string).await;
+    T::get_value(data.data)
 }
 
 pub async fn get_mpv_property_string(instance: &Mpv, property: &str) -> Result<String, Error> {
     let ipc_string = format!("{{ \"command\": [\"get_property\",\"{}\"] }}\n", property);
-    match serde_json::from_str::<Value>(&send_command_async(instance, &ipc_string).await) {
-        Ok(val) => {
-            if let Value::Object(map) = val {
-                if let Value::String(ref error) = map["error"] {
-                    if error == "success" && map.contains_key("data") {
-                        match map["data"] {
-                            Value::Bool(b) => Ok(b.to_string()),
-                            Value::Number(ref n) => Ok(n.to_string()),
-                            Value::String(ref s) => Ok(s.to_string()),
-                            Value::Array(ref array) => Ok(format!("{:?}", array)),
-                            Value::Object(ref map) => Ok(format!("{:?}", map)),
-                            _ => Err(Error(ErrorCode::UnsupportedType)),
-                        }
-                    } else {
-                        Err(Error(ErrorCode::MpvError(error.to_string())))
-                    }
-                } else {
-                    Err(Error(ErrorCode::UnexpectedValue))
+    let data = send_command_async(instance, &ipc_string).await;
+    if let Value::Object(map) = data.data {
+        if let Value::String(ref error) = map["error"] {
+            if error == "success" && map.contains_key("data") {
+                match map["data"] {
+                    Value::Bool(b) => Ok(b.to_string()),
+                    Value::Number(ref n) => Ok(n.to_string()),
+                    Value::String(ref s) => Ok(s.to_string()),
+                    Value::Array(ref array) => Ok(format!("{:?}", array)),
+                    Value::Object(ref map) => Ok(format!("{:?}", map)),
+                    _ => Err(Error(ErrorCode::UnsupportedType)),
                 }
             } else {
-                Err(Error(ErrorCode::UnexpectedValue))
+                Err(Error(ErrorCode::MpvError(error.to_string())))
             }
+        } else {
+            Err(Error(ErrorCode::UnexpectedValue))
         }
-        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
+    } else {
+        Err(Error(ErrorCode::UnexpectedValue))
     }
 }
 
@@ -225,10 +218,12 @@ pub async fn set_mpv_property<T: TypeHandler>(
         property,
         value.as_string()
     );
-    match serde_json::from_str::<Value>(&send_command_async(instance, &ipc_string).await) {
-        Ok(_) => Ok(()),
-        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
-    }
+    // match serde_json::from_str::<Value>(&send_command_async(instance, &ipc_string).await) {
+    //     Ok(_) => Ok(()),
+    //     Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
+    // }
+    send_command_async(instance, &ipc_string).await;
+    Ok(())
 }
 
 pub async fn run_mpv_command(instance: &Mpv, command: &str, args: &[&str]) -> Result<(), Error> {
@@ -239,20 +234,26 @@ pub async fn run_mpv_command(instance: &Mpv, command: &str, args: &[&str]) -> Re
         }
     }
     ipc_string.push_str("] }\n");
-    match serde_json::from_str::<Value>(&send_command_async(instance, &ipc_string).await) {
-        Ok(feedback) => {
-            if let Value::String(ref error) = feedback["error"] {
-                if error == "success" {
-                    Ok(())
-                } else {
-                    Err(Error(ErrorCode::MpvError(error.to_string())))
-                }
-            } else {
-                Err(Error(ErrorCode::UnexpectedResult))
-            }
-        }
-        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
+    let data = send_command_async(instance, &ipc_string).await;
+    if data.error == "success" {
+        Ok(())
+    } else {
+        Err(Error(ErrorCode::MpvError(data.error)))
     }
+    // match serde_json::from_str::<Value>(&send_command_async(instance, &ipc_string).await) {
+    //     Ok(feedback) => {
+    //         if let Value::String(ref error) = feedback["error"] {
+    //             if error == "success" {
+    //                 Ok(())
+    //             } else {
+    //                 Err(Error(ErrorCode::MpvError(error.to_string())))
+    //             }
+    //         } else {
+    //             Err(Error(ErrorCode::UnexpectedResult))
+    //         }
+    //     }
+    //     Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
+    // }
 }
 
 pub async fn observe_mpv_property(instance: &Mpv, id: &isize, property: &str) -> Result<(), Error> {
@@ -260,20 +261,26 @@ pub async fn observe_mpv_property(instance: &Mpv, id: &isize, property: &str) ->
         "{{ \"command\": [\"observe_property\", {}, \"{}\"] }}\n",
         id, property
     );
-    match serde_json::from_str::<Value>(&send_command_async(instance, &ipc_string).await) {
-        Ok(feedback) => {
-            if let Value::String(ref error) = feedback["error"] {
-                if error == "success" {
-                    Ok(())
-                } else {
-                    Err(Error(ErrorCode::MpvError(error.to_string())))
-                }
-            } else {
-                Err(Error(ErrorCode::UnexpectedResult))
-            }
-        }
-        Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
+    let data = send_command_async(instance, &ipc_string).await;
+    if data.error == "success" {
+        Ok(())
+    } else {
+        Err(Error(ErrorCode::MpvError(data.error)))
     }
+    // match serde_json::from_str::<Value>(&send_command_async(instance, &ipc_string).await) {
+    //     Ok(feedback) => {
+    //         if let Value::String(ref error) = feedback["error"] {
+    //             if error == "success" {
+    //                 Ok(())
+    //             } else {
+    //                 Err(Error(ErrorCode::MpvError(error.to_string())))
+    //             }
+    //         } else {
+    //             Err(Error(ErrorCode::UnexpectedResult))
+    //         }
+    //     }
+    //     Err(why) => Err(Error(ErrorCode::JsonParseError(why.to_string()))),
+    // }
 }
 
 fn try_convert_property(name: &str, id: isize, data: MpvDataType) -> Event {
@@ -313,20 +320,20 @@ fn try_convert_property(name: &str, id: isize, data: MpvDataType) -> Event {
     Event::PropertyChange { id, property }
 }
 
-pub async fn listen(instance: &Mpv) -> Result<Event, Error> {
-    // if !instance.reader.fill_buf().map_err(|_|Error(ErrorCode::ConnectError(format!("Failed to fill the buffer!"))))?[..9].eq(b"{\"event\":"){
-    //     // debug!("Message received isn't an event: {:#?}", String::from_utf8_lossy(instance.reader.buffer()));
-    //     return Ok(Event::Unimplemented);
-    // }
-    // let mut response = String::new();
-    // instance.reader.read_line(&mut response).unwrap();
-    // response = response.trim_end().to_string();
-    let response = instance.event_receiver.lock().await.recv().await.unwrap();
-    debug!("Event: {}", response);
-    handle_packet(&response)
-}
+// pub async fn listen(instance: &Mpv) -> Result<Event, Error> {
+//     // if !instance.reader.fill_buf().map_err(|_|Error(ErrorCode::ConnectError(format!("Failed to fill the buffer!"))))?[..9].eq(b"{\"event\":"){
+//     //     // debug!("Message received isn't an event: {:#?}", String::from_utf8_lossy(instance.reader.buffer()));
+//     //     return Ok(Event::Unimplemented);
+//     // }
+//     // let mut response = String::new();
+//     // instance.reader.read_line(&mut response).unwrap();
+//     // response = response.trim_end().to_string();
+//     let response = instance.event_receiver.lock().await.recv().await.unwrap();
+//     debug!("Event: {}", response);
+//     handle_event(&response)
+// }
 
-pub fn handle_packet(response: &str) -> Result<Event, Error> {
+pub fn handle_event(response: &str) -> Result<Event, Error> {
     match serde_json::from_str::<Value>(response) {
         Ok(e) => {
             if let Value::String(ref name) = e["event"] {
@@ -458,7 +465,7 @@ pub fn listen_raw(instance: &mut Mpv) -> String {
     // String::from_utf8_lossy(&buffer).into_owned()
 }
 
-async fn send_command_async(instance: &Mpv, command: &str) -> String {
+async fn send_command_async(instance: &Mpv, command: &str) -> Data {
     let mut stream = &instance.stream;
     match stream.write_all(command.as_bytes()) {
         Err(why) => panic!("Error: Could not write to socket: {}", why),
@@ -480,7 +487,7 @@ async fn send_command_async(instance: &Mpv, command: &str) -> String {
             //         // trace!("Response: {:#?}", response);
             //     }
             // }
-            debug!("Response: {}", response.trim_end());
+            debug!("Response: {:?}", response);
             response
         }
     }

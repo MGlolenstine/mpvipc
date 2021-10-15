@@ -1,4 +1,3 @@
-use env_logger;
 use mpvipc::{Error, Event, Mpv, MpvDataType, Property};
 use std::io::{self, Write};
 
@@ -13,8 +12,6 @@ fn seconds_to_hms(total: f64) -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    env_logger::init();
-
     let mut mpv = Mpv::connect("/tmp/mpvsocket").await?;
     let mut pause = false;
     let mut playback_time = std::f64::NAN;
@@ -24,8 +21,9 @@ async fn main() -> Result<(), Error> {
     mpv.observe_property(&3, "playback-time").await?;
     mpv.observe_property(&4, "duration").await?;
     mpv.observe_property(&5, "metadata").await?;
+    let mut event_receiver = mpv.event_receiver.take().unwrap();
     loop {
-        let event = mpv.event_listen().await?;
+        let event = event_receiver.recv().await.unwrap();
         match event {
             Event::PropertyChange { id: _, property } => match property {
                 Property::Path(Some(value)) => println!("\nPlaying: {}[K", value),

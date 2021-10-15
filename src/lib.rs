@@ -3,14 +3,19 @@ pub mod ipc;
 use async_trait::async_trait;
 
 use ipc::*;
+use log::{debug, error};
+use serde_json::{Deserializer, Value};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 use std::os::unix::net::UnixStream;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::broadcast::{Receiver, Sender};
+// use tokio::sync::mpsc::{Receiver, Sender};
+use serde::Deserialize;
+use serde::Serialize;
 use tokio::sync::Mutex;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
     Shutdown,
     StartFile,
@@ -32,7 +37,28 @@ pub enum Event {
     Unimplemented,
 }
 
-#[derive(Debug)]
+impl From<MpvEvent> for Event {
+    fn from(event: MpvEvent) -> Self {
+        match event.event.as_str() {
+            "pause" => Self::Pause,
+            "unpause" => Self::Unpause,
+            "shutdown" => Self::Shutdown,
+            "file_loaded" => Self::FileLoaded,
+            "tracks_changed" => Self::TracksChanged,
+            "track_switched" => Self::TrackSwitched,
+            "idle" => Self::Idle,
+            "seek" => Self::Seek,
+            "video_reconfig" => Self::VideoReconfig,
+            "audio_reconfig" => Self::AudioReconfig,
+            _ => {
+                error!("Event {:#?} hasn't been implemented yet!", event.event);
+                Self::Unimplemented
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Property {
     Path(Option<String>),
     Pause(bool),
@@ -68,7 +94,8 @@ pub enum MpvCommand {
     Stop,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum MpvDataType {
     Array(Vec<MpvDataType>),
     Bool(bool),
@@ -109,7 +136,7 @@ pub enum Switch {
     Toggle,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ErrorCode {
     MpvError(String),
     JsonParseError(String),
@@ -130,12 +157,12 @@ pub struct Mpv {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
     name: String,
-    event_receiver: Mutex<Receiver<String>>,
-    response_receiver: Mutex<Receiver<String>>,
+    pub event_receiver: Option<Receiver<Event>>,
+    response_receiver: Mutex<Receiver<Data>>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Playlist(pub Vec<PlaylistEntry>);
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Error(pub ErrorCode);
 
 impl Drop for Mpv {
@@ -148,6 +175,26 @@ impl fmt::Debug for Mpv {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_tuple("Mpv").field(&self.name).finish()
     }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+struct Data {
+    data: Value,
+    request_id: u32,
+    error: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+struct MpvEvent {
+    event: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+enum MpvMessage {
+    Event(MpvEvent),
+    Data(Data),
+    Other(serde_json::Value),
 }
 
 //?  Can't really be implemented due to listeners. Would have to start a new loop with new senders and receivers.
@@ -314,28 +361,41 @@ impl SetPropertyTypeHandler<usize> for usize {
 }
 
 impl Mpv {
-    async fn start_listeners(
-        eventtx: Sender<String>,
-        responsetx: Sender<String>,
-        stream: UnixStream,
-    ) {
+    async fn start_listeners(eventtx: Sender<Event>, responsetx: Sender<Data>, stream: UnixStream) {
         tokio::task::spawn(async move {
-            let mut reader = BufReader::new(stream);
-            let mut buf = vec![];
-            loop {
-                if reader.read_until(b'}', &mut buf).is_ok() {
-                    let response = String::from_utf8_lossy(buf.as_slice()).to_string();
-                    if response.eq("") {
-                        break;
+            let reader = BufReader::new(stream);
+            for item in Deserializer::from_reader(reader).into_iter::<MpvMessage>() {
+                dbg!(&item);
+                match item {
+                    Ok(MpvMessage::Data(a)) => {
+                        debug!("Data: {:#?}", a);
+                        responsetx.send(a).unwrap();
                     }
-                    if response.starts_with(r#"{"event":"#) {
-                        eventtx.send(response.clone()).await.unwrap();
-                    } else {
-                        responsetx.send(response.clone()).await.unwrap();
+                    Ok(MpvMessage::Event(e)) => {
+                        debug!("Event: {:#?}", e);
+                        eventtx.send(e.into()).unwrap();
                     }
+                    _ => {}
                 }
-                buf.clear();
             }
+            // let mut reader = BufReader::new(stream);
+            // let mut buf = vec![];
+            // loop {
+            //     if reader.read_until(b'}', &mut buf).is_ok() {
+            //         let response = String::from_utf8_lossy(buf.as_slice()).to_string();
+            //         if response.eq("") {
+            //             break;
+            //         }
+            //         if response.starts_with(r#"{"event":"#) {
+            //             debug!("Event: {}", response);
+            //             eventtx.send(handle_event(&response)).unwrap();
+            //         } else {
+            //             debug!("Response: {}", response);
+            //             responsetx.send(response.clone()).unwrap();
+            //         }
+            //     }
+            //     buf.clear();
+            // }
         });
     }
 
@@ -343,8 +403,8 @@ impl Mpv {
         match UnixStream::connect(socket) {
             Ok(stream) => {
                 let cloned_stream = stream.try_clone().expect("cloning UnixStream");
-                let (eventtx, eventrx) = tokio::sync::mpsc::channel::<String>(8);
-                let (responsetx, responserx) = tokio::sync::mpsc::channel::<String>(8);
+                let (eventtx, eventrx) = tokio::sync::broadcast::channel::<Event>(8);
+                let (responsetx, responserx) = tokio::sync::broadcast::channel::<Data>(8);
 
                 Mpv::start_listeners(
                     eventtx,
@@ -356,7 +416,7 @@ impl Mpv {
                     stream,
                     reader: BufReader::new(cloned_stream),
                     name: String::from(socket),
-                    event_receiver: Mutex::new(eventrx),
+                    event_receiver: Some(eventrx),
                     response_receiver: Mutex::new(responserx),
                 })
             }
@@ -466,9 +526,9 @@ impl Mpv {
     ///     println!("{:?}", event);
     /// }
     /// ```
-    pub async fn event_listen(&mut self) -> Result<Event, Error> {
-        listen(self).await
-    }
+    // pub async fn event_listen(&mut self) -> Result<Event, Error> {
+    //     listen(self).await
+    // }
 
     pub fn event_listen_raw(&mut self) -> String {
         listen_raw(self)
