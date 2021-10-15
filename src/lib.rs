@@ -1,9 +1,13 @@
 pub mod ipc;
 
+use async_trait::async_trait;
+
 use ipc::*;
+use tokio::sync::Mutex;
+use tokio::sync::mpsc::{Receiver, Sender};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::net::UnixStream;
 
 #[derive(Debug)]
@@ -126,6 +130,8 @@ pub struct Mpv {
     stream: UnixStream,
     reader: BufReader<UnixStream>,
     name: String,
+    event_receiver: Mutex<Receiver<String>>,
+    response_receiver: Mutex<Receiver<String>>,
 }
 #[derive(Debug)]
 pub struct Playlist(pub Vec<PlaylistEntry>);
@@ -144,27 +150,28 @@ impl fmt::Debug for Mpv {
     }
 }
 
-impl Clone for Mpv {
-    fn clone(&self) -> Self {
-        let stream = self.stream.try_clone().expect("cloning UnixStream");
-        let cloned_stream = stream.try_clone().expect("cloning UnixStream");
-        Mpv {
-            stream,
-            reader: BufReader::new(cloned_stream),
-            name: self.name.clone(),
-        }
-    }
+//?  Can't really be implemented due to listeners. Would have to start a new loop with new senders and receivers.
+// impl Clone for Mpv {
+//     fn clone(&self) -> Self {
+//         let stream = self.stream.try_clone().expect("cloning UnixStream");
+//         let cloned_stream = stream.try_clone().expect("cloning UnixStream");
+//         Mpv {
+//             stream,
+//             reader: BufReader::new(cloned_stream),
+//             name: self.name.clone(),
+//         }
+//     }
 
-    fn clone_from(&mut self, source: &Self) {
-        let stream = source.stream.try_clone().expect("cloning UnixStream");
-        let cloned_stream = stream.try_clone().expect("cloning UnixStream");
-        *self = Mpv {
-            stream,
-            reader: BufReader::new(cloned_stream),
-            name: source.name.clone(),
-        }
-    }
-}
+//     fn clone_from(&mut self, source: &Self) {
+//         let stream = source.stream.try_clone().expect("cloning UnixStream");
+//         let cloned_stream = stream.try_clone().expect("cloning UnixStream");
+//         *self = Mpv {
+//             stream,
+//             reader: BufReader::new(cloned_stream),
+//             name: source.name.clone(),
+//         }
+//     }
+// }
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -208,86 +215,126 @@ impl Display for ErrorCode {
     }
 }
 
+#[async_trait]
 pub trait GetPropertyTypeHandler: Sized {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<Self, Error>;
+    async fn get_property_generic(instance: &Mpv, property: &str) -> Result<Self, Error>;
 }
 
+#[async_trait]
 impl GetPropertyTypeHandler for bool {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<bool, Error> {
-        get_mpv_property::<bool>(instance, property)
+    async fn get_property_generic(instance: &Mpv, property: &str) -> Result<bool, Error> {
+        get_mpv_property::<bool>(instance, property).await
     }
 }
 
+#[async_trait]
 impl GetPropertyTypeHandler for String {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<String, Error> {
-        get_mpv_property::<String>(instance, property)
+    async fn get_property_generic(instance: &Mpv, property: &str) -> Result<String, Error> {
+        get_mpv_property::<String>(instance, property).await
     }
 }
 
+#[async_trait]
 impl GetPropertyTypeHandler for f64 {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<f64, Error> {
-        get_mpv_property::<f64>(instance, property)
+    async fn get_property_generic(instance: &Mpv, property: &str) -> Result<f64, Error> {
+        get_mpv_property::<f64>(instance, property).await
     }
 }
 
+#[async_trait]
 impl GetPropertyTypeHandler for usize {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<usize, Error> {
-        get_mpv_property::<usize>(instance, property)
+    async fn get_property_generic(instance: &Mpv, property: &str) -> Result<usize, Error> {
+        get_mpv_property::<usize>(instance, property).await
     }
 }
 
+#[async_trait]
 impl GetPropertyTypeHandler for Vec<PlaylistEntry> {
-    fn get_property_generic(instance: &Mpv, property: &str) -> Result<Vec<PlaylistEntry>, Error> {
-        get_mpv_property::<Vec<PlaylistEntry>>(instance, property)
+    async fn get_property_generic(instance: &Mpv, property: &str) -> Result<Vec<PlaylistEntry>, Error> {
+        get_mpv_property::<Vec<PlaylistEntry>>(instance, property).await
     }
 }
 
+#[async_trait]
 impl GetPropertyTypeHandler for HashMap<String, MpvDataType> {
-    fn get_property_generic(
+    async fn get_property_generic(
         instance: &Mpv,
         property: &str,
-    ) -> Result<HashMap<String, MpvDataType>, Error> {
-        get_mpv_property::<HashMap<String, MpvDataType>>(instance, property)
+     ) -> Result<HashMap<String, MpvDataType>, Error> {
+        get_mpv_property::<HashMap<String, MpvDataType>>(instance, property).await
     }
 }
 
+#[async_trait]
 pub trait SetPropertyTypeHandler<T> {
-    fn set_property_generic(instance: &Mpv, property: &str, value: T) -> Result<(), Error>;
+    async fn set_property_generic(instance: &Mpv, property: &str, value: T) -> Result<(), Error>;
 }
 
+#[async_trait]
 impl SetPropertyTypeHandler<bool> for bool {
-    fn set_property_generic(instance: &Mpv, property: &str, value: bool) -> Result<(), Error> {
-        set_mpv_property::<bool>(instance, property, value)
+    async fn set_property_generic(instance: &Mpv, property: &str, value: bool) -> Result<(), Error> {
+        set_mpv_property::<bool>(instance, property, value).await
     }
 }
 
+#[async_trait]
 impl SetPropertyTypeHandler<String> for String {
-    fn set_property_generic(instance: &Mpv, property: &str, value: String) -> Result<(), Error> {
-        set_mpv_property::<String>(instance, property, value)
+    async fn set_property_generic(instance: &Mpv, property: &str, value: String) -> Result<(), Error> {
+        set_mpv_property::<String>(instance, property, value).await
     }
 }
 
+#[async_trait]
 impl SetPropertyTypeHandler<f64> for f64 {
-    fn set_property_generic(instance: &Mpv, property: &str, value: f64) -> Result<(), Error> {
-        set_mpv_property::<f64>(instance, property, value)
+    async fn set_property_generic(instance: &Mpv, property: &str, value: f64) -> Result<(), Error> {
+        set_mpv_property::<f64>(instance, property, value).await
     }
 }
 
+#[async_trait]
 impl SetPropertyTypeHandler<usize> for usize {
-    fn set_property_generic(instance: &Mpv, property: &str, value: usize) -> Result<(), Error> {
-        set_mpv_property::<usize>(instance, property, value)
+    async fn set_property_generic(instance: &Mpv, property: &str, value: usize) -> Result<(), Error> {
+        set_mpv_property::<usize>(instance, property, value).await
     }
 }
 
 impl Mpv {
-    pub fn connect(socket: &str) -> Result<Mpv, Error> {
+
+    async fn start_listeners(eventtx: Sender<String>, responsetx: Sender<String>, stream: UnixStream){
+        tokio::task::spawn(async move {
+            let mut reader = BufReader::new(stream);
+            let mut buf = vec![];
+            loop {
+                if let Ok(_) = reader.read_until(b'}', &mut buf) {
+                    let response = String::from_utf8_lossy(buf.as_slice()).to_string();
+                    if response.eq("") {
+                        break;
+                    }
+                    if response.starts_with(r#"{"event":"#){
+                        eventtx.send(response.clone()).await.unwrap();
+                    }else{
+                        responsetx.send(response.clone()).await.unwrap();
+                    }
+                }
+                buf.clear();
+            }
+        });
+    }
+
+    pub async fn connect(socket: &str) -> Result<Mpv, Error> {
         match UnixStream::connect(socket) {
             Ok(stream) => {
                 let cloned_stream = stream.try_clone().expect("cloning UnixStream");
+                let (eventtx, eventrx) = tokio::sync::mpsc::channel::<String>(8);
+                let (responsetx, responserx) = tokio::sync::mpsc::channel::<String>(8);
+
+                Mpv::start_listeners(eventtx, responsetx, stream.try_clone().expect("cloning UnixStream")).await;
                 return Ok(Mpv {
                     stream,
                     reader: BufReader::new(cloned_stream),
                     name: String::from(socket),
+                    event_receiver: Mutex::new(eventrx),
+                    response_receiver: Mutex::new(responserx),
                 });
             }
             Err(internal_error) => Err(Error(ErrorCode::ConnectError(internal_error.to_string()))),
@@ -309,15 +356,15 @@ impl Mpv {
         &self.stream
     }
 
-    pub fn get_metadata(&self) -> Result<HashMap<String, MpvDataType>, Error> {
-        match get_mpv_property(self, "metadata") {
+    pub async fn get_metadata(&self) -> Result<HashMap<String, MpvDataType>, Error> {
+        match get_mpv_property(self, "metadata").await {
             Ok(map) => Ok(map),
             Err(err) => Err(err),
         }
     }
 
-    pub fn get_playlist(&self) -> Result<Playlist, Error> {
-        match get_mpv_property::<Vec<PlaylistEntry>>(self, "playlist") {
+    pub async fn get_playlist(&self) -> Result<Playlist, Error> {
+        match get_mpv_property::<Vec<PlaylistEntry>>(self, "playlist").await {
             Ok(entries) => Ok(Playlist(entries)),
             Err(msg) => Err(msg),
         }
@@ -349,8 +396,8 @@ impl Mpv {
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, Error> {
-        T::get_property_generic(self, property)
+    pub async fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, Error> {
+        T::get_property_generic(self, property).await
     }
 
     /// # Description
@@ -372,12 +419,12 @@ impl Mpv {
     ///     Ok(())
     /// }
     /// ```
-    pub fn get_property_string(&self, property: &str) -> Result<String, Error> {
-        get_mpv_property_string(self, property)
+    pub async fn get_property_string(&self, property: &str) -> Result<String, Error> {
+        get_mpv_property_string(self, property).await
     }
 
-    pub fn kill(&self) -> Result<(), Error> {
-        self.run_command(MpvCommand::Quit)
+    pub async fn kill(&self) -> Result<(), Error> {
+        self.run_command(MpvCommand::Quit).await
     }
 
     /// # Description
@@ -393,35 +440,35 @@ impl Mpv {
     ///     println!("{:?}", event);
     /// }
     /// ```
-    pub fn event_listen(&mut self) -> Result<Event, Error> {
-        listen(self)
+    pub async fn event_listen(&mut self) -> Result<Event, Error> {
+        listen(self).await
     }
 
     pub fn event_listen_raw(&mut self) -> String {
         listen_raw(self)
     }
 
-    pub fn next(&self) -> Result<(), Error> {
-        self.run_command(MpvCommand::PlaylistNext)
+    pub async fn next(&self) -> Result<(), Error> {
+        self.run_command(MpvCommand::PlaylistNext).await
     }
 
-    pub fn observe_property(&self, id: &isize, property: &str) -> Result<(), Error> {
-        observe_mpv_property(self, id, property)
+    pub async fn observe_property(&self, id: &isize, property: &str) -> Result<(), Error> {
+        observe_mpv_property(self, id, property).await
     }
 
-    pub fn pause(&self) -> Result<(), Error> {
-        set_mpv_property(self, "pause", true)
+    pub async fn pause(&self) -> Result<(), Error> {
+        set_mpv_property(self, "pause", true).await
     }
 
-    pub fn prev(&self) -> Result<(), Error> {
-        self.run_command(MpvCommand::PlaylistPrev)
+    pub async fn prev(&self) -> Result<(), Error> {
+        self.run_command(MpvCommand::PlaylistPrev).await
     }
 
-    pub fn restart(&self) -> Result<(), Error> {
+    pub async fn restart(&self) -> Result<(), Error> {
         self.run_command(MpvCommand::Seek {
             seconds: 0f64,
             option: SeekOptions::Absolute,
-        })
+        }).await
     }
 
     /// # Description
@@ -450,7 +497,7 @@ impl Mpv {
     ///     Ok(())
     /// }
     /// ```
-    pub fn run_command(&self, command: MpvCommand) -> Result<(), Error> {
+    pub async fn run_command(&self, command: MpvCommand) -> Result<(), Error> {
         match command {
             MpvCommand::LoadFile { file, option } => run_mpv_command(
                 self,
@@ -462,7 +509,7 @@ impl Mpv {
                         PlaylistAddOptions::Replace => "replace",
                     },
                 ],
-            ),
+            ).await,
             MpvCommand::LoadList { file, option } => run_mpv_command(
                 self,
                 "loadlist",
@@ -473,18 +520,18 @@ impl Mpv {
                         PlaylistAddOptions::Replace => "replace",
                     },
                 ],
-            ),
-            MpvCommand::PlaylistClear => run_mpv_command(self, "playlist-clear", &[]),
+            ).await,
+            MpvCommand::PlaylistClear => run_mpv_command(self, "playlist-clear", &[]).await,
             MpvCommand::PlaylistMove { from, to } => {
-                run_mpv_command(self, "playlist-move", &[&from.to_string(), &to.to_string()])
+                run_mpv_command(self, "playlist-move", &[&from.to_string(), &to.to_string()]).await
             }
-            MpvCommand::PlaylistNext => run_mpv_command(self, "playlist-next", &[]),
-            MpvCommand::PlaylistPrev => run_mpv_command(self, "playlist-prev", &[]),
+            MpvCommand::PlaylistNext => run_mpv_command(self, "playlist-next", &[]).await,
+            MpvCommand::PlaylistPrev => run_mpv_command(self, "playlist-prev", &[]).await,
             MpvCommand::PlaylistRemove(id) => {
-                run_mpv_command(self, "playlist-remove", &[&id.to_string()])
+                run_mpv_command(self, "playlist-remove", &[&id.to_string()]).await
             }
-            MpvCommand::PlaylistShuffle => run_mpv_command(self, "playlist-shuffle", &[]),
-            MpvCommand::Quit => run_mpv_command(self, "quit", &[]),
+            MpvCommand::PlaylistShuffle => run_mpv_command(self, "playlist-shuffle", &[]).await,
+            MpvCommand::Quit => run_mpv_command(self, "quit", &[]).await,
             MpvCommand::Seek { seconds, option } => run_mpv_command(
                 self,
                 "seek",
@@ -497,19 +544,19 @@ impl Mpv {
                         SeekOptions::RelativePercent => "relative-percent",
                     },
                 ],
-            ),
-            MpvCommand::Stop => run_mpv_command(self, "stop", &[]),
+            ).await,
+            MpvCommand::Stop => run_mpv_command(self, "stop", &[]).await,
         }
     }
 
     /// Run a custom command.
     /// This should only be used if the desired command is not implemented
     /// with [MpvCommand].
-    pub fn run_command_raw(&self, command: &str, args: &[&str]) -> Result<(), Error> {
-        run_mpv_command(self, command, args)
+    pub async fn run_command_raw(&self, command: &str, args: &[&str]) -> Result<(), Error> {
+        run_mpv_command(self, command, args).await
     }
 
-    pub fn playlist_add(
+    pub async fn playlist_add(
         &self,
         file: &str,
         file_type: PlaylistAddTypeOptions,
@@ -519,55 +566,55 @@ impl Mpv {
             PlaylistAddTypeOptions::File => self.run_command(MpvCommand::LoadFile {
                 file: file.to_string(),
                 option,
-            }),
+            }).await,
 
             PlaylistAddTypeOptions::Playlist => self.run_command(MpvCommand::LoadList {
                 file: file.to_string(),
                 option,
-            }),
+            }).await,
         }
     }
 
-    pub fn playlist_clear(&self) -> Result<(), Error> {
-        self.run_command(MpvCommand::PlaylistClear)
+    pub async fn playlist_clear(&self) -> Result<(), Error> {
+        self.run_command(MpvCommand::PlaylistClear).await
     }
 
-    pub fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), Error> {
-        self.run_command(MpvCommand::PlaylistMove { from, to })
+    pub async fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), Error> {
+        self.run_command(MpvCommand::PlaylistMove { from, to }).await
     }
 
-    pub fn playlist_play_id(&self, id: usize) -> Result<(), Error> {
-        set_mpv_property(self, "playlist-pos", id)
+    pub async fn playlist_play_id(&self, id: usize) -> Result<(), Error> {
+        set_mpv_property(self, "playlist-pos", id).await
     }
 
-    pub fn playlist_play_next(&self, id: usize) -> Result<(), Error> {
-        match get_mpv_property::<usize>(self, "playlist-pos") {
+    pub async fn playlist_play_next(&self, id: usize) -> Result<(), Error> {
+        match get_mpv_property::<usize>(self, "playlist-pos").await {
             Ok(current_id) => self.run_command(MpvCommand::PlaylistMove {
                 from: id,
                 to: current_id + 1,
-            }),
+            }).await,
             Err(msg) => Err(msg),
         }
     }
 
-    pub fn playlist_remove_id(&self, id: usize) -> Result<(), Error> {
-        self.run_command(MpvCommand::PlaylistRemove(id))
+    pub async fn playlist_remove_id(&self, id: usize) -> Result<(), Error> {
+        self.run_command(MpvCommand::PlaylistRemove(id)).await
     }
 
-    pub fn playlist_shuffle(&self) -> Result<(), Error> {
-        self.run_command(MpvCommand::PlaylistShuffle)
+    pub async fn playlist_shuffle(&self) -> Result<(), Error> {
+        self.run_command(MpvCommand::PlaylistShuffle).await
     }
 
-    pub fn seek(&self, seconds: f64, option: SeekOptions) -> Result<(), Error> {
-        self.run_command(MpvCommand::Seek { seconds, option })
+    pub async fn seek(&self, seconds: f64, option: SeekOptions) -> Result<(), Error> {
+        self.run_command(MpvCommand::Seek { seconds, option }).await
     }
 
-    pub fn set_loop_file(&self, option: Switch) -> Result<(), Error> {
+    pub async fn set_loop_file(&self, option: Switch) -> Result<(), Error> {
         let mut enabled = false;
         match option {
             Switch::On => enabled = true,
             Switch::Off => {}
-            Switch::Toggle => match get_mpv_property_string(self, "loop-file") {
+            Switch::Toggle => match get_mpv_property_string(self, "loop-file").await {
                 Ok(value) => match value.as_ref() {
                     "false" => {
                         enabled = true;
@@ -579,15 +626,15 @@ impl Mpv {
                 Err(msg) => return Err(msg),
             },
         }
-        set_mpv_property(self, "loop-file", enabled)
+        set_mpv_property(self, "loop-file", enabled).await
     }
 
-    pub fn set_loop_playlist(&self, option: Switch) -> Result<(), Error> {
+    pub async fn set_loop_playlist(&self, option: Switch) -> Result<(), Error> {
         let mut enabled = false;
         match option {
             Switch::On => enabled = true,
             Switch::Off => {}
-            Switch::Toggle => match get_mpv_property_string(self, "loop-playlist") {
+            Switch::Toggle => match get_mpv_property_string(self, "loop-playlist").await {
                 Ok(value) => match value.as_ref() {
                     "false" => {
                         enabled = true;
@@ -599,22 +646,22 @@ impl Mpv {
                 Err(msg) => return Err(msg),
             },
         }
-        set_mpv_property(self, "loop-playlist", enabled)
+        set_mpv_property(self, "loop-playlist", enabled).await
     }
 
-    pub fn set_mute(&self, option: Switch) -> Result<(), Error> {
+    pub async fn set_mute(&self, option: Switch) -> Result<(), Error> {
         let mut enabled = false;
         match option {
             Switch::On => enabled = true,
             Switch::Off => {}
-            Switch::Toggle => match get_mpv_property::<bool>(self, "mute") {
+            Switch::Toggle => match get_mpv_property::<bool>(self, "mute").await {
                 Ok(value) => {
                     enabled = !value;
                 }
                 Err(msg) => return Err(msg),
             },
         }
-        set_mpv_property(self, "mute", enabled)
+        set_mpv_property(self, "mute", enabled).await
     }
 
     /// # Description
@@ -641,55 +688,55 @@ impl Mpv {
     ///     Ok(())
     /// }
     /// ```
-    pub fn set_property<T: SetPropertyTypeHandler<T>>(
+    pub async fn set_property<T: SetPropertyTypeHandler<T>>(
         &self,
         property: &str,
         value: T,
     ) -> Result<(), Error> {
-        T::set_property_generic(self, property, value)
+        T::set_property_generic(self, property, value).await
     }
 
-    pub fn set_speed(&self, input_speed: f64, option: NumberChangeOptions) -> Result<(), Error> {
-        match get_mpv_property::<f64>(self, "speed") {
+    pub async fn set_speed(&self, input_speed: f64, option: NumberChangeOptions) -> Result<(), Error> {
+        match get_mpv_property::<f64>(self, "speed").await {
             Ok(speed) => match option {
                 NumberChangeOptions::Increase => {
-                    set_mpv_property(self, "speed", speed + input_speed)
+                    set_mpv_property(self, "speed", speed + input_speed).await
                 }
 
                 NumberChangeOptions::Decrease => {
-                    set_mpv_property(self, "speed", speed - input_speed)
+                    set_mpv_property(self, "speed", speed - input_speed).await
                 }
 
-                NumberChangeOptions::Absolute => set_mpv_property(self, "speed", input_speed),
+                NumberChangeOptions::Absolute => set_mpv_property(self, "speed", input_speed).await,
             },
             Err(msg) => Err(msg),
         }
     }
 
-    pub fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), Error> {
-        match get_mpv_property::<f64>(self, "volume") {
+    pub async fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), Error> {
+        match get_mpv_property::<f64>(self, "volume").await {
             Ok(volume) => match option {
                 NumberChangeOptions::Increase => {
-                    set_mpv_property(self, "volume", volume + input_volume)
+                    set_mpv_property(self, "volume", volume + input_volume).await
                 }
 
                 NumberChangeOptions::Decrease => {
-                    set_mpv_property(self, "volume", volume - input_volume)
+                    set_mpv_property(self, "volume", volume - input_volume).await
                 }
 
-                NumberChangeOptions::Absolute => set_mpv_property(self, "volume", input_volume),
+                NumberChangeOptions::Absolute => set_mpv_property(self, "volume", input_volume).await,
             },
             Err(msg) => Err(msg),
         }
     }
 
-    pub fn stop(&self) -> Result<(), Error> {
-        self.run_command(MpvCommand::Stop)
+    pub async fn stop(&self) -> Result<(), Error> {
+        self.run_command(MpvCommand::Stop).await
     }
 
-    pub fn toggle(&self) -> Result<(), Error> {
-        match get_mpv_property::<bool>(self, "pause") {
-            Ok(paused) => set_mpv_property(self, "pause", !paused),
+    pub async fn toggle(&self) -> Result<(), Error> {
+        match get_mpv_property::<bool>(self, "pause").await {
+            Ok(paused) => set_mpv_property(self, "pause", !paused).await,
             Err(msg) => Err(msg),
         }
     }

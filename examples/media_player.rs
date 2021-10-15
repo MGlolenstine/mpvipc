@@ -11,20 +11,21 @@ fn seconds_to_hms(total: f64) -> String {
     format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
 }
 
-fn main() -> Result<(), Error> {
+#[tokio::main]
+async fn main() -> Result<(), Error> {
     env_logger::init();
 
-    let mut mpv = Mpv::connect("/tmp/mpvsocket")?;
+    let mut mpv = Mpv::connect("/tmp/mpvsocket").await?;
     let mut pause = false;
     let mut playback_time = std::f64::NAN;
     let mut duration = std::f64::NAN;
-    mpv.observe_property(&1, "path")?;
-    mpv.observe_property(&2, "pause")?;
-    mpv.observe_property(&3, "playback-time")?;
-    mpv.observe_property(&4, "duration")?;
-    mpv.observe_property(&5, "metadata")?;
+    mpv.observe_property(&1, "path").await?;
+    mpv.observe_property(&2, "pause").await?;
+    mpv.observe_property(&3, "playback-time").await?;
+    mpv.observe_property(&4, "duration").await?;
+    mpv.observe_property(&5, "metadata").await?;
     loop {
-        let event = mpv.event_listen()?;
+        let event = mpv.event_listen().await?;
         match event {
             Event::PropertyChange { id: _, property } => match property {
                 Property::Path(Some(value)) => println!("\nPlaying: {}[K", value),
