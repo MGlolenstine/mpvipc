@@ -3,7 +3,6 @@ use log::{debug, warn};
 use serde_json::{self, Value};
 use std::collections::HashMap;
 use std::io::prelude::*;
-use std::io::BufReader;
 use std::iter::Iterator;
 
 #[derive(Debug)]
@@ -234,13 +233,12 @@ pub async fn set_mpv_property<T: TypeHandler>(
 
 pub async fn run_mpv_command(instance: &Mpv, command: &str, args: &[&str]) -> Result<(), Error> {
     let mut ipc_string = format!("{{ \"command\": [\"{}\"", command);
-    if args.len() > 0 {
+    if !args.is_empty() {
         for arg in args {
             ipc_string.push_str(&format!(", \"{}\"", arg));
         }
     }
     ipc_string.push_str("] }\n");
-    ipc_string = ipc_string;
     match serde_json::from_str::<Value>(&send_command_async(instance, &ipc_string).await) {
         Ok(feedback) => {
             if let Value::String(ref error) = feedback["error"] {
@@ -329,7 +327,7 @@ pub async fn listen(instance: &Mpv) -> Result<Event, Error> {
 }
 
 pub fn handle_packet(response: &str) -> Result<Event, Error> {
-    match serde_json::from_str::<Value>(&response) {
+    match serde_json::from_str::<Value>(response) {
         Ok(e) => {
             if let Value::String(ref name) = e["event"] {
                 let event: Event;
@@ -405,7 +403,7 @@ pub fn handle_packet(response: &str) -> Result<Event, Error> {
                             }
 
                             Value::Array(ref a) => {
-                                if name == "playlist".to_string() {
+                                if name == *"playlist" {
                                     data =
                                         MpvDataType::Playlist(Playlist(json_array_to_playlist(a)));
                                 } else {
@@ -466,7 +464,13 @@ async fn send_command_async(instance: &Mpv, command: &str) -> String {
         Err(why) => panic!("Error: Could not write to socket: {}", why),
         Ok(_) => {
             debug!("Command: {}", command.trim_end());
-            let response = instance.response_receiver.lock().await.recv().await.unwrap();
+            let response = instance
+                .response_receiver
+                .lock()
+                .await
+                .recv()
+                .await
+                .unwrap();
             // let mut response = String::new();
             // {
             //     let mut reader = BufReader::new(stream);
@@ -484,8 +488,8 @@ async fn send_command_async(instance: &Mpv, command: &str) -> String {
 
 fn json_map_to_hashmap(map: &serde_json::map::Map<String, Value>) -> HashMap<String, MpvDataType> {
     let mut output_map: HashMap<String, MpvDataType> = HashMap::new();
-    for (ref key, ref value) in map.iter() {
-        match **value {
+    for (ref key, value) in map.iter() {
+        match *value {
             Value::Array(ref array) => {
                 output_map.insert(
                     key.to_string(),
@@ -524,9 +528,9 @@ fn json_map_to_hashmap(map: &serde_json::map::Map<String, Value>) -> HashMap<Str
     output_map
 }
 
-fn json_array_to_vec(array: &Vec<Value>) -> Vec<MpvDataType> {
+fn json_array_to_vec(array: &[Value]) -> Vec<MpvDataType> {
     let mut output: Vec<MpvDataType> = Vec::new();
-    if array.len() > 0 {
+    if !array.is_empty() {
         match array[0] {
             Value::Array(_) => {
                 for entry in array {
@@ -582,7 +586,7 @@ fn json_array_to_vec(array: &Vec<Value>) -> Vec<MpvDataType> {
     output
 }
 
-fn json_array_to_playlist(array: &Vec<Value>) -> Vec<PlaylistEntry> {
+fn json_array_to_playlist(array: &[Value]) -> Vec<PlaylistEntry> {
     let mut output: Vec<PlaylistEntry> = Vec::new();
     for (id, entry) in array.iter().enumerate() {
         let mut filename: String = String::new();

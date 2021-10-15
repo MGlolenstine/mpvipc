@@ -3,12 +3,12 @@ pub mod ipc;
 use async_trait::async_trait;
 
 use ipc::*;
-use tokio::sync::Mutex;
-use tokio::sync::mpsc::{Receiver, Sender};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::net::UnixStream;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub enum Event {
@@ -250,7 +250,10 @@ impl GetPropertyTypeHandler for usize {
 
 #[async_trait]
 impl GetPropertyTypeHandler for Vec<PlaylistEntry> {
-    async fn get_property_generic(instance: &Mpv, property: &str) -> Result<Vec<PlaylistEntry>, Error> {
+    async fn get_property_generic(
+        instance: &Mpv,
+        property: &str,
+    ) -> Result<Vec<PlaylistEntry>, Error> {
         get_mpv_property::<Vec<PlaylistEntry>>(instance, property).await
     }
 }
@@ -260,7 +263,7 @@ impl GetPropertyTypeHandler for HashMap<String, MpvDataType> {
     async fn get_property_generic(
         instance: &Mpv,
         property: &str,
-     ) -> Result<HashMap<String, MpvDataType>, Error> {
+    ) -> Result<HashMap<String, MpvDataType>, Error> {
         get_mpv_property::<HashMap<String, MpvDataType>>(instance, property).await
     }
 }
@@ -272,14 +275,22 @@ pub trait SetPropertyTypeHandler<T> {
 
 #[async_trait]
 impl SetPropertyTypeHandler<bool> for bool {
-    async fn set_property_generic(instance: &Mpv, property: &str, value: bool) -> Result<(), Error> {
+    async fn set_property_generic(
+        instance: &Mpv,
+        property: &str,
+        value: bool,
+    ) -> Result<(), Error> {
         set_mpv_property::<bool>(instance, property, value).await
     }
 }
 
 #[async_trait]
 impl SetPropertyTypeHandler<String> for String {
-    async fn set_property_generic(instance: &Mpv, property: &str, value: String) -> Result<(), Error> {
+    async fn set_property_generic(
+        instance: &Mpv,
+        property: &str,
+        value: String,
+    ) -> Result<(), Error> {
         set_mpv_property::<String>(instance, property, value).await
     }
 }
@@ -293,26 +304,33 @@ impl SetPropertyTypeHandler<f64> for f64 {
 
 #[async_trait]
 impl SetPropertyTypeHandler<usize> for usize {
-    async fn set_property_generic(instance: &Mpv, property: &str, value: usize) -> Result<(), Error> {
+    async fn set_property_generic(
+        instance: &Mpv,
+        property: &str,
+        value: usize,
+    ) -> Result<(), Error> {
         set_mpv_property::<usize>(instance, property, value).await
     }
 }
 
 impl Mpv {
-
-    async fn start_listeners(eventtx: Sender<String>, responsetx: Sender<String>, stream: UnixStream){
+    async fn start_listeners(
+        eventtx: Sender<String>,
+        responsetx: Sender<String>,
+        stream: UnixStream,
+    ) {
         tokio::task::spawn(async move {
             let mut reader = BufReader::new(stream);
             let mut buf = vec![];
             loop {
-                if let Ok(_) = reader.read_until(b'}', &mut buf) {
+                if reader.read_until(b'}', &mut buf).is_ok() {
                     let response = String::from_utf8_lossy(buf.as_slice()).to_string();
                     if response.eq("") {
                         break;
                     }
-                    if response.starts_with(r#"{"event":"#){
+                    if response.starts_with(r#"{"event":"#) {
                         eventtx.send(response.clone()).await.unwrap();
-                    }else{
+                    } else {
                         responsetx.send(response.clone()).await.unwrap();
                     }
                 }
@@ -328,14 +346,19 @@ impl Mpv {
                 let (eventtx, eventrx) = tokio::sync::mpsc::channel::<String>(8);
                 let (responsetx, responserx) = tokio::sync::mpsc::channel::<String>(8);
 
-                Mpv::start_listeners(eventtx, responsetx, stream.try_clone().expect("cloning UnixStream")).await;
-                return Ok(Mpv {
+                Mpv::start_listeners(
+                    eventtx,
+                    responsetx,
+                    stream.try_clone().expect("cloning UnixStream"),
+                )
+                .await;
+                Ok(Mpv {
                     stream,
                     reader: BufReader::new(cloned_stream),
                     name: String::from(socket),
                     event_receiver: Mutex::new(eventrx),
                     response_receiver: Mutex::new(responserx),
-                });
+                })
             }
             Err(internal_error) => Err(Error(ErrorCode::ConnectError(internal_error.to_string()))),
         }
@@ -348,7 +371,7 @@ impl Mpv {
             .expect("socket disconnect");
         let mut buffer = [0; 32];
         for _ in 0..stream.bytes().count() {
-            stream.read(&mut buffer[..]).unwrap();
+            stream.read_exact(&mut buffer[..]).unwrap();
         }
     }
 
@@ -396,7 +419,10 @@ impl Mpv {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn get_property<T: GetPropertyTypeHandler>(&self, property: &str) -> Result<T, Error> {
+    pub async fn get_property<T: GetPropertyTypeHandler>(
+        &self,
+        property: &str,
+    ) -> Result<T, Error> {
         T::get_property_generic(self, property).await
     }
 
@@ -468,7 +494,8 @@ impl Mpv {
         self.run_command(MpvCommand::Seek {
             seconds: 0f64,
             option: SeekOptions::Absolute,
-        }).await
+        })
+        .await
     }
 
     /// # Description
@@ -499,28 +526,34 @@ impl Mpv {
     /// ```
     pub async fn run_command(&self, command: MpvCommand) -> Result<(), Error> {
         match command {
-            MpvCommand::LoadFile { file, option } => run_mpv_command(
-                self,
-                "loadfile",
-                &[
-                    file.as_ref(),
-                    match option {
-                        PlaylistAddOptions::Append => "append",
-                        PlaylistAddOptions::Replace => "replace",
-                    },
-                ],
-            ).await,
-            MpvCommand::LoadList { file, option } => run_mpv_command(
-                self,
-                "loadlist",
-                &[
-                    file.as_ref(),
-                    match option {
-                        PlaylistAddOptions::Append => "append",
-                        PlaylistAddOptions::Replace => "replace",
-                    },
-                ],
-            ).await,
+            MpvCommand::LoadFile { file, option } => {
+                run_mpv_command(
+                    self,
+                    "loadfile",
+                    &[
+                        file.as_ref(),
+                        match option {
+                            PlaylistAddOptions::Append => "append",
+                            PlaylistAddOptions::Replace => "replace",
+                        },
+                    ],
+                )
+                .await
+            }
+            MpvCommand::LoadList { file, option } => {
+                run_mpv_command(
+                    self,
+                    "loadlist",
+                    &[
+                        file.as_ref(),
+                        match option {
+                            PlaylistAddOptions::Append => "append",
+                            PlaylistAddOptions::Replace => "replace",
+                        },
+                    ],
+                )
+                .await
+            }
             MpvCommand::PlaylistClear => run_mpv_command(self, "playlist-clear", &[]).await,
             MpvCommand::PlaylistMove { from, to } => {
                 run_mpv_command(self, "playlist-move", &[&from.to_string(), &to.to_string()]).await
@@ -532,19 +565,22 @@ impl Mpv {
             }
             MpvCommand::PlaylistShuffle => run_mpv_command(self, "playlist-shuffle", &[]).await,
             MpvCommand::Quit => run_mpv_command(self, "quit", &[]).await,
-            MpvCommand::Seek { seconds, option } => run_mpv_command(
-                self,
-                "seek",
-                &[
-                    &seconds.to_string(),
-                    match option {
-                        SeekOptions::Absolute => "absolute",
-                        SeekOptions::Relative => "relative",
-                        SeekOptions::AbsolutePercent => "absolute-percent",
-                        SeekOptions::RelativePercent => "relative-percent",
-                    },
-                ],
-            ).await,
+            MpvCommand::Seek { seconds, option } => {
+                run_mpv_command(
+                    self,
+                    "seek",
+                    &[
+                        &seconds.to_string(),
+                        match option {
+                            SeekOptions::Absolute => "absolute",
+                            SeekOptions::Relative => "relative",
+                            SeekOptions::AbsolutePercent => "absolute-percent",
+                            SeekOptions::RelativePercent => "relative-percent",
+                        },
+                    ],
+                )
+                .await
+            }
             MpvCommand::Stop => run_mpv_command(self, "stop", &[]).await,
         }
     }
@@ -563,15 +599,21 @@ impl Mpv {
         option: PlaylistAddOptions,
     ) -> Result<(), Error> {
         match file_type {
-            PlaylistAddTypeOptions::File => self.run_command(MpvCommand::LoadFile {
-                file: file.to_string(),
-                option,
-            }).await,
+            PlaylistAddTypeOptions::File => {
+                self.run_command(MpvCommand::LoadFile {
+                    file: file.to_string(),
+                    option,
+                })
+                .await
+            }
 
-            PlaylistAddTypeOptions::Playlist => self.run_command(MpvCommand::LoadList {
-                file: file.to_string(),
-                option,
-            }).await,
+            PlaylistAddTypeOptions::Playlist => {
+                self.run_command(MpvCommand::LoadList {
+                    file: file.to_string(),
+                    option,
+                })
+                .await
+            }
         }
     }
 
@@ -580,7 +622,8 @@ impl Mpv {
     }
 
     pub async fn playlist_move_id(&self, from: usize, to: usize) -> Result<(), Error> {
-        self.run_command(MpvCommand::PlaylistMove { from, to }).await
+        self.run_command(MpvCommand::PlaylistMove { from, to })
+            .await
     }
 
     pub async fn playlist_play_id(&self, id: usize) -> Result<(), Error> {
@@ -589,10 +632,13 @@ impl Mpv {
 
     pub async fn playlist_play_next(&self, id: usize) -> Result<(), Error> {
         match get_mpv_property::<usize>(self, "playlist-pos").await {
-            Ok(current_id) => self.run_command(MpvCommand::PlaylistMove {
-                from: id,
-                to: current_id + 1,
-            }).await,
+            Ok(current_id) => {
+                self.run_command(MpvCommand::PlaylistMove {
+                    from: id,
+                    to: current_id + 1,
+                })
+                .await
+            }
             Err(msg) => Err(msg),
         }
     }
@@ -696,7 +742,11 @@ impl Mpv {
         T::set_property_generic(self, property, value).await
     }
 
-    pub async fn set_speed(&self, input_speed: f64, option: NumberChangeOptions) -> Result<(), Error> {
+    pub async fn set_speed(
+        &self,
+        input_speed: f64,
+        option: NumberChangeOptions,
+    ) -> Result<(), Error> {
         match get_mpv_property::<f64>(self, "speed").await {
             Ok(speed) => match option {
                 NumberChangeOptions::Increase => {
@@ -713,7 +763,11 @@ impl Mpv {
         }
     }
 
-    pub async fn set_volume(&self, input_volume: f64, option: NumberChangeOptions) -> Result<(), Error> {
+    pub async fn set_volume(
+        &self,
+        input_volume: f64,
+        option: NumberChangeOptions,
+    ) -> Result<(), Error> {
         match get_mpv_property::<f64>(self, "volume").await {
             Ok(volume) => match option {
                 NumberChangeOptions::Increase => {
@@ -724,7 +778,9 @@ impl Mpv {
                     set_mpv_property(self, "volume", volume - input_volume).await
                 }
 
-                NumberChangeOptions::Absolute => set_mpv_property(self, "volume", input_volume).await,
+                NumberChangeOptions::Absolute => {
+                    set_mpv_property(self, "volume", input_volume).await
+                }
             },
             Err(msg) => Err(msg),
         }
