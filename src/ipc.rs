@@ -186,26 +186,33 @@ pub async fn get_mpv_property<T: TypeHandler>(instance: &Mpv, property: &str) ->
 pub async fn get_mpv_property_string(instance: &Mpv, property: &str) -> Result<String, Error> {
     let ipc_string = format!("{{ \"command\": [\"get_property\",\"{}\"] }}\n", property);
     let data = send_command_async(instance, &ipc_string).await;
-    if let Value::Object(map) = data.data {
-        if let Value::String(ref error) = map["error"] {
-            if error == "success" && map.contains_key("data") {
-                match map["data"] {
-                    Value::Bool(b) => Ok(b.to_string()),
-                    Value::Number(ref n) => Ok(n.to_string()),
-                    Value::String(ref s) => Ok(s.to_string()),
-                    Value::Array(ref array) => Ok(format!("{:?}", array)),
-                    Value::Object(ref map) => Ok(format!("{:?}", map)),
-                    _ => Err(Error(ErrorCode::UnsupportedType)),
-                }
-            } else {
-                Err(Error(ErrorCode::MpvError(error.to_string())))
-            }
-        } else {
-            Err(Error(ErrorCode::UnexpectedValue))
-        }
-    } else {
-        Err(Error(ErrorCode::UnexpectedValue))
+    if data.error == "success"{
+        Ok(data.data.to_string())
+    }else{
+        Err(Error(ErrorCode::MpvError(data.error.to_string())))
     }
+    // if let Value::Object(map) = data.data {
+    //     if let Value::String(ref error) = map["error"] {
+    //         if error == "success" && map.contains_key("data") {
+    //             match map["data"] {
+    //                 Value::Bool(b) => Ok(b.to_string()),
+    //                 Value::Number(ref n) => Ok(n.to_string()),
+    //                 Value::String(ref s) => Ok(s.to_string()),
+    //                 Value::Array(ref array) => Ok(format!("{:?}", array)),
+    //                 Value::Object(ref map) => Ok(format!("{:?}", map)),
+    //                 _ => Err(Error(ErrorCode::UnsupportedType)),
+    //             }
+    //         } else {
+    //             Err(Error(ErrorCode::MpvError(error.to_string())))
+    //         }
+    //     } else {
+    //         error!("`error` is not a string!");
+    //         Err(Error(ErrorCode::UnexpectedValue))
+    //     }
+    // } else {
+    //     error!("`data` part of the packet failed to parse!");
+    //     Err(Error(ErrorCode::UnexpectedValue))
+    // }
 }
 
 pub async fn set_mpv_property<T: TypeHandler>(
@@ -471,10 +478,11 @@ async fn send_command_async(instance: &Mpv, command: &str) -> Data {
         Err(why) => panic!("Error: Could not write to socket: {}", why),
         Ok(_) => {
             debug!("Command: {}", command.trim_end());
-            let response = instance
+            let response = &mut *instance
                 .response_receiver
                 .lock()
-                .await
+                .await;
+            let response = response
                 .recv()
                 .await
                 .unwrap();

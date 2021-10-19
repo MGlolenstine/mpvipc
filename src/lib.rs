@@ -3,16 +3,16 @@ pub mod ipc;
 use async_trait::async_trait;
 
 use ipc::*;
-use log::{debug, error};
+use log::{debug, trace, warn};
 use serde_json::{Deserializer, Value};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::io::{BufReader, Read};
 use std::os::unix::net::UnixStream;
-use tokio::sync::broadcast::{Receiver, Sender};
-// use tokio::sync::mpsc::{Receiver, Sender};
+// use tokio::sync::broadcast::{Receiver, Sender};
 use serde::Deserialize;
 use serde::Serialize;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +51,7 @@ impl From<MpvEvent> for Event {
             "video_reconfig" => Self::VideoReconfig,
             "audio_reconfig" => Self::AudioReconfig,
             _ => {
-                error!("Event {:#?} hasn't been implemented yet!", event.event);
+                trace!("Event {:#?} hasn't been implemented yet!", event.event);
                 Self::Unimplemented
             }
         }
@@ -185,6 +185,22 @@ struct Data {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+struct Response {
+    request_id: u32,
+    error: String,
+}
+
+impl Into<Data> for Response {
+    fn into(self) -> Data {
+        Data {
+            data: serde_json::Value::Null,
+            request_id: self.request_id,
+            error: self.error,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
 struct MpvEvent {
     event: String,
 }
@@ -194,6 +210,7 @@ struct MpvEvent {
 enum MpvMessage {
     Event(MpvEvent),
     Data(Data),
+    GenericResponse(Response),
     Other(serde_json::Value),
 }
 
@@ -362,40 +379,32 @@ impl SetPropertyTypeHandler<usize> for usize {
 
 impl Mpv {
     async fn start_listeners(eventtx: Sender<Event>, responsetx: Sender<Data>, stream: UnixStream) {
-        tokio::task::spawn(async move {
+        let event_clone = eventtx.clone();
+        let response_clone = responsetx.clone();
+        // tokio::task::spawn_blocking(move ||{
+        std::thread::spawn(move || {
             let reader = BufReader::new(stream);
             for item in Deserializer::from_reader(reader).into_iter::<MpvMessage>() {
-                dbg!(&item);
                 match item {
                     Ok(MpvMessage::Data(a)) => {
                         debug!("Data: {:#?}", a);
-                        responsetx.send(a).unwrap();
+                        response_clone.blocking_send(a).unwrap();
+                    }
+                    Ok(MpvMessage::GenericResponse(a)) => {
+                        debug!("Generic Response: {:#?}", a);
+                        response_clone.blocking_send(a.into()).unwrap();
+                        // responsetx.send(a.into()).await.unwrap();
                     }
                     Ok(MpvMessage::Event(e)) => {
                         debug!("Event: {:#?}", e);
-                        eventtx.send(e.into()).unwrap();
+                        // eventtx.send(e.into()).await.unwrap();
+                        event_clone.blocking_send(e.into()).unwrap();
                     }
-                    _ => {}
+                    _ => {
+                        warn!("Unhandled message: {:#?}", item);
+                    }
                 }
             }
-            // let mut reader = BufReader::new(stream);
-            // let mut buf = vec![];
-            // loop {
-            //     if reader.read_until(b'}', &mut buf).is_ok() {
-            //         let response = String::from_utf8_lossy(buf.as_slice()).to_string();
-            //         if response.eq("") {
-            //             break;
-            //         }
-            //         if response.starts_with(r#"{"event":"#) {
-            //             debug!("Event: {}", response);
-            //             eventtx.send(handle_event(&response)).unwrap();
-            //         } else {
-            //             debug!("Response: {}", response);
-            //             responsetx.send(response.clone()).unwrap();
-            //         }
-            //     }
-            //     buf.clear();
-            // }
         });
     }
 
@@ -403,8 +412,8 @@ impl Mpv {
         match UnixStream::connect(socket) {
             Ok(stream) => {
                 let cloned_stream = stream.try_clone().expect("cloning UnixStream");
-                let (eventtx, eventrx) = tokio::sync::broadcast::channel::<Event>(8);
-                let (responsetx, responserx) = tokio::sync::broadcast::channel::<Data>(8);
+                let (eventtx, eventrx) = tokio::sync::mpsc::channel::<Event>(8);
+                let (responsetx, responserx) = tokio::sync::mpsc::channel::<Data>(8);
 
                 Mpv::start_listeners(
                     eventtx,
