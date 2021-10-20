@@ -501,6 +501,11 @@ async fn send_command_async(instance: &Mpv, command: &str) -> Data {
     }
 }
 
+pub async fn send_flat_command(instance: &Mpv, command: &str) -> Result<(), Box<dyn std::error::Error>>{
+    let mut stream = &instance.stream;
+    Ok(stream.write_all(command.as_bytes())?)
+}
+
 fn json_map_to_hashmap(map: &serde_json::map::Map<String, Value>) -> HashMap<String, MpvDataType> {
     let mut output_map: HashMap<String, MpvDataType> = HashMap::new();
     for (ref key, value) in map.iter() {

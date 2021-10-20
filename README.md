@@ -27,7 +27,7 @@ $ mpv --input-ipc-server=/tmp/mpvsocket --idle
 
 Here is a small code example which connects to the socket /tmp/mpvsocket and toggles playback.
 
-```
+```Rust
 extern crate mpvipc;
 
 use mpvipc::*;
@@ -41,6 +41,11 @@ fn main() {
 ```
 
 For a more extensive example and proof of concept, see project [mpvc](https://gitlab.com/mpv-ipc/mpvc-rs).
+
+## TODO
+
+Check how well the library compares to the JS and LUA counterparts.
+`the lua framework is player/lua.c and player/lua/defaults.lua, and for js it's player/javascript.c and player/javascript/defaults.js`
 
 ## Bugs / Ideas
 
